@@ -1,0 +1,29 @@
+[package]
+name = "leveraged-prediction"
+version = "0.1.0"
+description = "Fixed-duration 1000x leveraged prediction market for MagicBlock ER"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "leveraged_prediction"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+custom-heap = []
+custom-panic = []
+anchor-debug = []
+
+[dependencies]
+anchor-lang = { version = "=1.0.2", features = ["init-if-needed"] }
+anchor-spl = { version = "=1.0.2" }
+ephemeral-rollups-sdk = { git = "https://github.com/magicblock-labs/ephemeral-rollups-sdk.git", rev = "ca0ee3c77493248286b2ab97c5ede8fc7e0eb350", version = "=0.15.5", features = ["anchor"] }
+hydra-api = { git = "https://github.com/magicblock-labs/hydra.git", rev = "07d584a5b43a9d2ff23f42f0458ccba14c74239d", version = "=0.1.1", features = ["cpi-native"] }
+pyth-solana-receiver-sdk = "=2.0.0"
+solana-sha256-hasher = "3"
+solana-instructions-sysvar = "=3.0.1"
