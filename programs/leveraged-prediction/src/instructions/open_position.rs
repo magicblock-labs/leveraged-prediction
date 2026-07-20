@@ -20,9 +20,15 @@ pub fn handler(
         ErrorCode::InvalidNonce
     );
     crate::require_market_financial_capacity(ctx.accounts.market.active_positions)?;
+    ctx.accounts.user_positions.require_capacity()?;
     let clock = Clock::get()?;
     let now = clock.unix_timestamp;
-    let sample = read_oracle_price(&ctx.accounts.price_update.to_account_info(), &clock)?;
+    let sample = read_oracle_price(
+        &ctx.accounts.price_update.to_account_info(),
+        &clock,
+        &ctx.accounts.market.oracle_feed_id,
+    )?
+    .ok_or(ErrorCode::InvalidOraclePrice)?;
     require!(
         sample.price >= min_entry_price && sample.price <= max_entry_price,
         ErrorCode::SlippageExceeded
@@ -30,7 +36,7 @@ pub fn handler(
 
     let pool_before = ctx.accounts.pool_token_account.amount;
     let epoch_equity = if ctx.accounts.market.active_positions == 0 {
-        bounded_risk_epoch_equity(pool_before, MAX_INITIAL_LIQUIDITY)
+        bounded_risk_epoch_equity(pool_before, MAX_MARKET_EQUITY)
     } else {
         ctx.accounts.market.risk_epoch_equity
     };
@@ -38,17 +44,12 @@ pub fn handler(
         ctx.accounts.market.total_shares,
         epoch_equity,
         pool_before,
-        MIN_INITIAL_LIQUIDITY,
+        MIN_MARKET_EQUITY,
     )?;
-    let user_open_collateral =
-        ctx.accounts
-            .user_position
-            .positions
-            .iter()
-            .try_fold(0_u64, |sum, position| {
-                sum.checked_add(u64::from(position.collateral))
-                    .ok_or(ErrorCode::MathOverflow)
-            })?;
+    let user_open_collateral = ctx
+        .accounts
+        .user_positions
+        .open_collateral(ctx.accounts.market.market_id)?;
     require_user_open_collateral_capacity(
         user_open_collateral,
         collateral,
@@ -75,19 +76,21 @@ pub fn handler(
         task_salt,
     );
     let scheduled_data = crate::instruction::SettlePosition { nonce, task_salt }.data();
-    let scheduled_metas = [
-        SchedMeta::readonly(ctx.accounts.user.key().to_bytes()),
-        SchedMeta::writable(ctx.accounts.market.key().to_bytes()),
-        SchedMeta::writable(ctx.accounts.user_position.key().to_bytes()),
-        SchedMeta::writable(ctx.accounts.pool_token_account.key().to_bytes()),
-        SchedMeta::writable(ctx.accounts.user_token_account.key().to_bytes()),
-        SchedMeta::readonly(ctx.accounts.derived_fee_authority.key().to_bytes()),
-        SchedMeta::writable(ctx.accounts.fee_token_account.key().to_bytes()),
-        SchedMeta::readonly(ctx.accounts.collateral_mint.key().to_bytes()),
-        SchedMeta::readonly(ctx.accounts.price_update.key().to_bytes()),
-        SchedMeta::readonly(ctx.accounts.token_program.key().to_bytes()),
-        SchedMeta::readonly(Instructions::id().to_bytes()),
-    ];
+    let scheduled_metas = settle_position_schedule_metas(crate::accounts::SettlePosition {
+        user: ctx.accounts.user.key(),
+        protocol_config: ctx.accounts.protocol_config.key(),
+        market: ctx.accounts.market.key(),
+        user_positions: ctx.accounts.user_positions.key(),
+        pool_token_account: ctx.accounts.pool_token_account.key(),
+        user_token_account: ctx.accounts.user_token_account.key(),
+        payout_escrow_token_account: ctx.accounts.payout_escrow_token_account.key(),
+        derived_fee_authority: ctx.accounts.derived_fee_authority.key(),
+        fee_token_account: ctx.accounts.fee_token_account.key(),
+        collateral_mint: ctx.accounts.collateral_mint.key(),
+        price_update: ctx.accounts.price_update.key(),
+        token_program: ctx.accounts.token_program.key(),
+        instructions_sysvar: Instructions::id(),
+    })?;
     let scheduled = [ScheduledIx {
         program_id: crate::ID.to_bytes(),
         metas: &scheduled_metas,
@@ -141,9 +144,9 @@ pub fn handler(
         market_info.lamports() >= required_market_lamports,
         ErrorCode::InsufficientHydraSponsorLamports
     );
+    let market_id = ctx.accounts.market.market_id.to_le_bytes();
     let market_bump = [ctx.accounts.market.bump];
-    let market_mint = ctx.accounts.market.collateral_mint;
-    let market_seeds: &[&[u8]] = &[MARKET_SEED, market_mint.as_ref(), &market_bump];
+    let market_seeds: &[&[u8]] = &[MARKET_SEED, market_id.as_ref(), &market_bump];
     hydra_cpi::create(
         &market_info,
         &ctx.accounts.hydra_crank.to_account_info(),
@@ -180,7 +183,8 @@ pub fn handler(
         .checked_add(POSITION_DURATION_SECONDS)
         .ok_or(ErrorCode::MathOverflow)?;
     let (compact_collateral, compact_expires_at) = compact_position_values(collateral, expires_at)?;
-    ctx.accounts.user_position.positions.push(CompactPosition {
+    ctx.accounts.user_positions.positions.push(CompactPosition {
+        market_id: ctx.accounts.market.market_id,
         nonce,
         task_salt,
         collateral: compact_collateral,
@@ -201,15 +205,34 @@ pub fn handler(
     Ok(())
 }
 
+fn settle_position_schedule_metas(
+    accounts: crate::accounts::SettlePosition,
+) -> Result<Vec<SchedMeta>> {
+    accounts
+        .to_account_metas(None)
+        .into_iter()
+        .map(|meta| {
+            require!(!meta.is_signer, ErrorCode::InvalidHydraCrank);
+            Ok(if meta.is_writable {
+                SchedMeta::writable(meta.pubkey.to_bytes())
+            } else {
+                SchedMeta::readonly(meta.pubkey.to_bytes())
+            })
+        })
+        .collect()
+}
+
 #[derive(Accounts)]
 #[instruction(nonce: u32, task_salt: [u8; 32])]
 pub struct OpenPosition<'info> {
     #[account(mut)]
     pub user: Signer<'info>,
-    #[account(mut, seeds = [MARKET_SEED, market.collateral_mint.as_ref()], bump = market.bump)]
+    #[account(seeds = [CONFIG_SEED], bump = protocol_config.bump, has_one = collateral_mint)]
+    pub protocol_config: Box<Account<'info, ProtocolConfig>>,
+    #[account(mut, seeds = [MARKET_SEED, &market.market_id.to_le_bytes()], bump = market.bump)]
     pub market: Box<Account<'info, Market>>,
-    #[account(mut, seeds = [USER_POSITION_SEED, market.key().as_ref(), user.key().as_ref()], bump)]
-    pub user_position: Box<Account<'info, UserPosition>>,
+    #[account(mut, seeds = [USER_POSITIONS_SEED, user.key().as_ref()], bump)]
+    pub user_positions: Box<Account<'info, UserPositions>>,
     #[account(mut, associated_token::mint = collateral_mint, associated_token::authority = market)]
     pub pool_token_account: Box<Account<'info, TokenAccount>>,
     /// CHECK: Canonical zero-data PDA used by the scheduled settlement instruction.
@@ -219,10 +242,11 @@ pub struct OpenPosition<'info> {
     pub fee_token_account: Box<Account<'info, TokenAccount>>,
     #[account(mut)]
     pub user_token_account: Box<Account<'info, TokenAccount>>,
-    #[account(address = market.collateral_mint)]
+    #[account(mut, associated_token::mint = collateral_mint, associated_token::authority = user_positions)]
+    pub payout_escrow_token_account: Box<Account<'info, TokenAccount>>,
     pub collateral_mint: Box<Account<'info, Mint>>,
-    /// CHECK: Canonical address and owner are constrained here; payload is parsed in the handler.
-    #[account(address = ORACLE_ACCOUNT, owner = ORACLE_PROGRAM_ID)]
+    /// CHECK: Canonical address is constrained here; payload and owner are parsed in the handler.
+    #[account(address = market.oracle)]
     pub price_update: UncheckedAccount<'info>,
     pub token_program: Program<'info, Token>,
     /// CHECK: Address is derived from the Market, user, position nonce, and task salt.
@@ -238,4 +262,38 @@ pub struct OpenPosition<'info> {
     #[account(address = MAGIC_PROGRAM_ID)]
     pub magic_program: UncheckedAccount<'info>,
     pub system_program: Program<'info, System>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scheduled_settlement_uses_generated_account_order_and_writability() {
+        let keys = (0..13).map(|_| Pubkey::new_unique()).collect::<Vec<_>>();
+        let generated = crate::accounts::SettlePosition {
+            user: keys[0],
+            protocol_config: keys[1],
+            market: keys[2],
+            user_positions: keys[3],
+            pool_token_account: keys[4],
+            user_token_account: keys[5],
+            payout_escrow_token_account: keys[6],
+            derived_fee_authority: keys[7],
+            fee_token_account: keys[8],
+            collateral_mint: keys[9],
+            price_update: keys[10],
+            token_program: keys[11],
+            instructions_sysvar: keys[12],
+        };
+        let expected = generated.to_account_metas(None);
+        assert!(expected.iter().all(|meta| !meta.is_signer));
+
+        let actual = settle_position_schedule_metas(generated).unwrap();
+        assert_eq!(actual.len(), expected.len());
+        for (actual, expected) in actual.iter().zip(expected) {
+            assert_eq!(actual.pubkey, expected.pubkey.to_bytes());
+            assert_eq!(actual.is_writable, expected.is_writable);
+        }
+    }
 }

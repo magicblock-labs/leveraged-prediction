@@ -26,8 +26,14 @@ pub enum ErrorCode {
     OracleExponentMismatch,
     #[msg("oracle price or confidence is invalid")]
     InvalidOraclePrice,
-    #[msg("market sponsor does not have enough lamports for UserPosition rent")]
-    InsufficientSponsorLamports,
+    #[msg("the user positions account is at capacity")]
+    UserPositionsCapacityExceeded,
+    #[msg("the user liquidity account is at market capacity")]
+    UserLiquidityCapacityExceeded,
+    #[msg("the user has no liquidity entry for this market")]
+    UserLiquidityMarketNotFound,
+    #[msg("active shares or withdrawals prevent user liquidity-state undelegation")]
+    ActiveUserLiquidity,
     #[msg("position nonce does not match market sequence")]
     InvalidNonce,
     #[msg("Hydra crank address does not match the position task seed")]

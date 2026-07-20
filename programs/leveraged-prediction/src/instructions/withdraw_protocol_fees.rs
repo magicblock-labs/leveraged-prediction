@@ -48,9 +48,9 @@ fn fee_transfer<'info>(
 #[derive(Accounts)]
 pub struct WithdrawProtocolFees<'info> {
     pub fee_authority: Signer<'info>,
-    #[account(seeds = [CONFIG_SEED, collateral_mint.key().as_ref()], bump = protocol_config.bump, has_one = fee_authority, has_one = collateral_mint)]
+    #[account(seeds = [CONFIG_SEED], bump = protocol_config.bump, has_one = fee_authority, has_one = collateral_mint)]
     pub protocol_config: Account<'info, ProtocolConfig>,
-    #[account(seeds = [MARKET_SEED, market.collateral_mint.as_ref()], bump = market.bump)]
+    #[account(seeds = [MARKET_SEED, &market.market_id.to_le_bytes()], bump = market.bump)]
     pub market: Account<'info, Market>,
     /// CHECK: Canonical zero-data PDA derived from the Market.
     #[account(seeds = [FEE_AUTHORITY_SEED, market.key().as_ref()], bump)]
@@ -59,7 +59,6 @@ pub struct WithdrawProtocolFees<'info> {
     pub fee_token_account: Account<'info, TokenAccount>,
     #[account(mut)]
     pub destination_token_account: Account<'info, TokenAccount>,
-    #[account(address = market.collateral_mint)]
     pub collateral_mint: Account<'info, Mint>,
     pub token_program: Program<'info, Token>,
 }

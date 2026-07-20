@@ -1,16 +1,21 @@
 use super::*;
 
 pub fn handler(ctx: Context<ManageWithdrawal>, shares: u128, min_assets_out: u64) -> Result<()> {
+    let user_market = ctx
+        .accounts
+        .user_liquidity
+        .market_mut(ctx.accounts.market.market_id)
+        .ok_or(ErrorCode::UserLiquidityMarketNotFound)?;
     require!(
-        shares > 0 && shares <= ctx.accounts.user_position.shares,
+        shares > 0 && shares <= user_market.shares,
         ErrorCode::InvalidAmount
     );
     require!(
-        ctx.accounts.user_position.pending_withdrawal_shares == 0,
+        user_market.pending_withdrawal_shares == 0,
         ErrorCode::WithdrawalAlreadyPending
     );
-    ctx.accounts.user_position.pending_withdrawal_shares = shares;
-    ctx.accounts.user_position.min_assets_out = min_assets_out;
+    user_market.pending_withdrawal_shares = shares;
+    user_market.min_assets_out = min_assets_out;
     emit!(WithdrawalRequested {
         market: ctx.accounts.market.key(),
         user: ctx.accounts.user.key(),
@@ -23,8 +28,8 @@ pub fn handler(ctx: Context<ManageWithdrawal>, shares: u128, min_assets_out: u64
 #[derive(Accounts)]
 pub struct ManageWithdrawal<'info> {
     pub user: Signer<'info>,
-    #[account(mut, seeds = [MARKET_SEED, market.collateral_mint.as_ref()], bump = market.bump)]
+    #[account(mut, seeds = [MARKET_SEED, &market.market_id.to_le_bytes()], bump = market.bump)]
     pub market: Account<'info, Market>,
-    #[account(mut, seeds = [USER_POSITION_SEED, market.key().as_ref(), user.key().as_ref()], bump)]
-    pub user_position: Account<'info, UserPosition>,
+    #[account(mut, seeds = [USER_LIQUIDITY_SEED, user.key().as_ref()], bump)]
+    pub user_liquidity: Account<'info, UserLiquidity>,
 }

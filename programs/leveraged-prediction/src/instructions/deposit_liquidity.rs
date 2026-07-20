@@ -9,15 +9,18 @@ pub fn handler(ctx: Context<DepositLiquidity>, amount: u64, min_shares_out: u128
     let first_lp = ctx.accounts.market.total_shares == 0;
     if first_lp {
         require!(
-            amount >= MIN_INITIAL_LIQUIDITY && amount <= MAX_INITIAL_LIQUIDITY,
+            amount >= MIN_MARKET_EQUITY && amount <= MAX_MARKET_EQUITY,
             ErrorCode::InvalidAmount
         );
     }
     let equity_before = ctx.accounts.pool_token_account.amount;
     let equity_after =
-        require_deposit_capacity(equity_before, amount, MAX_INITIAL_LIQUIDITY, first_lp)?;
+        require_deposit_capacity(equity_before, amount, MAX_MARKET_EQUITY, first_lp)?;
     let shares = shares_for_deposit(amount, equity_before, ctx.accounts.market.total_shares)?;
     require!(shares >= min_shares_out, ErrorCode::SlippageExceeded);
+    ctx.accounts
+        .user_liquidity
+        .market_or_insert_mut(ctx.accounts.market.market_id)?;
     token::transfer(
         CpiContext::new(
             ctx.accounts.token_program.key(),
@@ -29,9 +32,11 @@ pub fn handler(ctx: Context<DepositLiquidity>, amount: u64, min_shares_out: u128
         ),
         amount,
     )?;
-    ctx.accounts.user_position.shares = ctx
+    let user_market = ctx
         .accounts
-        .user_position
+        .user_liquidity
+        .market_or_insert_mut(ctx.accounts.market.market_id)?;
+    user_market.shares = user_market
         .shares
         .checked_add(shares)
         .ok_or(ErrorCode::MathOverflow)?;
@@ -54,15 +59,16 @@ pub fn handler(ctx: Context<DepositLiquidity>, amount: u64, min_shares_out: u128
 #[derive(Accounts)]
 pub struct DepositLiquidity<'info> {
     pub user: Signer<'info>,
-    #[account(mut, seeds = [MARKET_SEED, market.collateral_mint.as_ref()], bump = market.bump)]
+    #[account(seeds = [CONFIG_SEED], bump = protocol_config.bump, has_one = collateral_mint)]
+    pub protocol_config: Account<'info, ProtocolConfig>,
+    #[account(mut, seeds = [MARKET_SEED, &market.market_id.to_le_bytes()], bump = market.bump)]
     pub market: Account<'info, Market>,
-    #[account(mut, seeds = [USER_POSITION_SEED, market.key().as_ref(), user.key().as_ref()], bump)]
-    pub user_position: Account<'info, UserPosition>,
+    #[account(mut, seeds = [USER_LIQUIDITY_SEED, user.key().as_ref()], bump)]
+    pub user_liquidity: Account<'info, UserLiquidity>,
     #[account(mut, associated_token::mint = collateral_mint, associated_token::authority = market)]
     pub pool_token_account: Account<'info, TokenAccount>,
     #[account(mut)]
     pub user_token_account: Account<'info, TokenAccount>,
-    #[account(address = market.collateral_mint)]
     pub collateral_mint: Account<'info, Mint>,
     pub token_program: Program<'info, Token>,
 }

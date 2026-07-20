@@ -12,30 +12,31 @@ use error::ErrorCode;
 use instructions::*;
 use state::{Direction, MarketMode};
 
+pub(crate) use instructions::claim_fallback_payout::__client_accounts_claim_fallback_payout;
 pub(crate) use instructions::delegate_market::__client_accounts_delegate_market;
+pub(crate) use instructions::delegate_user_liquidity::__client_accounts_delegate_user_liquidity;
+pub(crate) use instructions::delegate_user_positions::__client_accounts_delegate_user_positions;
 pub(crate) use instructions::deposit_liquidity::__client_accounts_deposit_liquidity;
 pub(crate) use instructions::execute_withdrawal::__client_accounts_execute_withdrawal;
 pub(crate) use instructions::initialize_market::__client_accounts_initialize_market;
 pub(crate) use instructions::initialize_protocol_config::__client_accounts_initialize_protocol_config;
-pub(crate) use instructions::initialize_user_position::__client_accounts_initialize_user_position;
+pub(crate) use instructions::initialize_user_liquidity::__client_accounts_initialize_user_liquidity;
+pub(crate) use instructions::initialize_user_positions::__client_accounts_initialize_user_positions;
 pub(crate) use instructions::open_position::__client_accounts_open_position;
 pub(crate) use instructions::request_withdrawal::__client_accounts_manage_withdrawal;
 pub(crate) use instructions::set_market_mode::__client_accounts_admin_market;
 pub(crate) use instructions::settle_position::__client_accounts_settle_position;
+pub(crate) use instructions::undelegate_user_liquidity::__client_accounts_undelegate_user_liquidity;
 pub(crate) use instructions::withdraw_protocol_fees::__client_accounts_withdraw_protocol_fees;
 
 declare_id!("AcvFWjSFrLAAWMynqQmBxeBe8wHRTVhhHtB6byatQLFr");
 
 pub const CONFIG_SEED: &[u8] = b"protocol_config";
 pub const MARKET_SEED: &[u8] = b"market";
-pub const USER_POSITION_SEED: &[u8] = b"user_position";
+pub const USER_POSITIONS_SEED: &[u8] = b"user_positions";
+pub const USER_LIQUIDITY_SEED: &[u8] = b"user_liquidity";
 pub const FEE_AUTHORITY_SEED: &[u8] = b"fee_authority";
 pub const ORACLE_PROGRAM_ID: Pubkey = pubkey!("PriCems5tHihc6UDXDjzjeawomAwBduWMGAi8ZUjppd");
-pub const ORACLE_ACCOUNT: Pubkey = pubkey!("ENYwebBThHzmzwPLAQvCucUTsjyfBSZdD9ViXksS4jPu");
-pub const ORACLE_FEED_ID: [u8; 32] = [
-    198, 173, 62, 132, 29, 156, 15, 36, 138, 223, 249, 12, 247, 118, 248, 57, 253, 89, 241, 203,
-    216, 255, 188, 143, 148, 2, 136, 62, 161, 110, 132, 32,
-];
 pub const ORACLE_EXPONENT: i32 = 8;
 pub const COLLATERAL_DECIMALS: u8 = 6;
 pub const LEVERAGE: u16 = 1_000;
@@ -44,8 +45,8 @@ pub const SETTLEMENT_BUFFER_SECONDS: i64 = 10;
 pub const MAX_MARKET_FINANCIALLY_ACTIVE_POSITIONS: u32 = 8;
 pub const MIN_POSITION_COLLATERAL: u64 = 1_000_000;
 pub const MAX_POSITION_COLLATERAL: u64 = 1_000_000_000;
-pub const MIN_INITIAL_LIQUIDITY: u64 = 100_000_000_000;
-pub const MAX_INITIAL_LIQUIDITY: u64 = 100_000_000_000_000;
+pub const MIN_MARKET_EQUITY: u64 = 100_000_000_000;
+pub const MAX_MARKET_EQUITY: u64 = 100_000_000_000_000;
 pub const USER_OPEN_COLLATERAL_BPS: u16 = 100;
 pub const SAFETY_BUFFER_BPS: u16 = 1_000;
 pub const PROFIT_FEE_BPS: u16 = 1_000;
@@ -133,6 +134,13 @@ pub struct ProtocolFeesWithdrawn {
     pub assets: u64,
 }
 
+#[event]
+pub struct FallbackPayoutClaimed {
+    pub user: Pubkey,
+    pub destination: Pubkey,
+    pub assets: u64,
+}
+
 pub fn hydra_task_seed(market: Pubkey, user: Pubkey, nonce: u32, task_salt: [u8; 32]) -> [u8; 32] {
     hashv(&[
         b"leveraged_prediction_position",
@@ -163,20 +171,52 @@ pub mod leveraged_prediction {
         instructions::initialize_protocol_config::handler(ctx)
     }
 
-    pub fn initialize_market(ctx: Context<InitializeMarket>, sponsor_lamports: u64) -> Result<()> {
-        instructions::initialize_market::handler(ctx, sponsor_lamports)
+    pub fn claim_fallback_payout(ctx: Context<ClaimFallbackPayout>) -> Result<()> {
+        instructions::claim_fallback_payout::handler(ctx)
+    }
+
+    pub fn initialize_market(
+        ctx: Context<InitializeMarket>,
+        market_id: u16,
+        oracle: Pubkey,
+        oracle_feed_id: [u8; 32],
+        sponsor_lamports: u64,
+    ) -> Result<()> {
+        instructions::initialize_market::handler(
+            ctx,
+            market_id,
+            oracle,
+            oracle_feed_id,
+            sponsor_lamports,
+        )
     }
 
     pub fn set_market_mode(ctx: Context<AdminMarket>, mode: MarketMode) -> Result<()> {
         instructions::set_market_mode::handler(ctx, mode)
     }
 
-    pub fn delegate_market(ctx: Context<DelegateMarket>) -> Result<()> {
-        instructions::delegate_market::handler(ctx)
+    pub fn delegate_market(ctx: Context<DelegateMarket>, market_id: u16) -> Result<()> {
+        instructions::delegate_market::handler(ctx, market_id)
     }
 
-    pub fn initialize_user_position(ctx: Context<InitializeUserPosition>) -> Result<()> {
-        instructions::initialize_user_position::handler(ctx)
+    pub fn initialize_user_positions(ctx: Context<InitializeUserPositions>) -> Result<()> {
+        instructions::initialize_user_positions::handler(ctx)
+    }
+
+    pub fn initialize_user_liquidity(ctx: Context<InitializeUserLiquidity>) -> Result<()> {
+        instructions::initialize_user_liquidity::handler(ctx)
+    }
+
+    pub fn delegate_user_positions(ctx: Context<DelegateUserPositions>) -> Result<()> {
+        instructions::delegate_user_positions::handler(ctx)
+    }
+
+    pub fn delegate_user_liquidity(ctx: Context<DelegateUserLiquidity>) -> Result<()> {
+        instructions::delegate_user_liquidity::handler(ctx)
+    }
+
+    pub fn undelegate_user_liquidity(ctx: Context<UndelegateUserLiquidity>) -> Result<()> {
+        instructions::undelegate_user_liquidity::handler(ctx)
     }
 
     pub fn deposit_liquidity(
@@ -254,6 +294,89 @@ mod address_tests {
             hydra_crank_address(market, user, 1, [1; 32]),
             hydra_crank_address(market, user, 1, [2; 32])
         );
+    }
+
+    #[test]
+    fn protocol_config_is_global_and_market_ids_are_isolated() {
+        let (config, _) = Pubkey::find_program_address(&[CONFIG_SEED], &crate::ID);
+        let (same_config, _) = Pubkey::find_program_address(&[CONFIG_SEED], &crate::ID);
+        assert_eq!(config, same_config);
+
+        let (market_zero, _) =
+            Pubkey::find_program_address(&[MARKET_SEED, &0_u16.to_le_bytes()], &crate::ID);
+        let (market_one, _) =
+            Pubkey::find_program_address(&[MARKET_SEED, &1_u16.to_le_bytes()], &crate::ID);
+        assert_ne!(market_zero, market_one);
+    }
+
+    #[test]
+    fn user_state_pdas_are_user_scoped_and_split_by_workload() {
+        let first_user = Pubkey::new_unique();
+        let second_user = Pubkey::new_unique();
+        let (first_positions, _) =
+            Pubkey::find_program_address(&[USER_POSITIONS_SEED, first_user.as_ref()], &crate::ID);
+        let (first_liquidity, _) =
+            Pubkey::find_program_address(&[USER_LIQUIDITY_SEED, first_user.as_ref()], &crate::ID);
+        let (second_positions, _) =
+            Pubkey::find_program_address(&[USER_POSITIONS_SEED, second_user.as_ref()], &crate::ID);
+
+        assert_ne!(first_positions, first_liquidity);
+        assert_ne!(first_positions, second_positions);
+    }
+
+    #[test]
+    fn user_state_initialization_and_delegation_require_only_the_user_signer() {
+        let keys = (0..16).map(|_| Pubkey::new_unique()).collect::<Vec<_>>();
+        let initialize_positions = crate::accounts::InitializeUserPositions {
+            user: keys[0],
+            user_positions: keys[1],
+            system_program: keys[2],
+        }
+        .to_account_metas(None);
+        let initialize_liquidity = crate::accounts::InitializeUserLiquidity {
+            user: keys[0],
+            user_liquidity: keys[3],
+            system_program: keys[2],
+        }
+        .to_account_metas(None);
+        let delegate_positions = crate::accounts::DelegateUserPositions {
+            user: keys[0],
+            buffer_user_positions: keys[4],
+            delegation_record_user_positions: keys[5],
+            delegation_metadata_user_positions: keys[6],
+            user_positions: keys[1],
+            owner_program: keys[7],
+            delegation_program: keys[8],
+            system_program: keys[2],
+        }
+        .to_account_metas(None);
+        let delegate_liquidity = crate::accounts::DelegateUserLiquidity {
+            user: keys[0],
+            buffer_user_liquidity: keys[9],
+            delegation_record_user_liquidity: keys[10],
+            delegation_metadata_user_liquidity: keys[11],
+            user_liquidity: keys[3],
+            owner_program: keys[7],
+            delegation_program: keys[8],
+            system_program: keys[2],
+        }
+        .to_account_metas(None);
+
+        for metas in [
+            initialize_positions,
+            initialize_liquidity,
+            delegate_positions,
+            delegate_liquidity,
+        ] {
+            assert_eq!(
+                metas
+                    .iter()
+                    .filter(|meta| meta.is_signer)
+                    .map(|meta| meta.pubkey)
+                    .collect::<Vec<_>>(),
+                vec![keys[0]]
+            );
+        }
     }
 
     fn trigger_sysvar_data(
