@@ -1,4 +1,3 @@
-import { BorshAccountsCoder, type Idl } from "@coral-xyz/anchor";
 import { DELEGATION_PROGRAM_ID } from "@magicblock-labs/ephemeral-rollups-sdk";
 import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 import {
@@ -10,9 +9,12 @@ import {
   decodeMarket,
   decodeProtocolConfig,
   decodeUserPositions,
-  accountDiscriminator,
 } from "@/app/lib/live/decode";
 import { ORACLE_PROGRAM_ID, readLiveConfig } from "@/app/lib/live/config";
+import {
+  decodeOraclePrice,
+  ORACLE_EXPONENT,
+} from "@/app/lib/live/oracle";
 import {
   marketPda,
   protocolConfigPda,
@@ -24,123 +26,8 @@ import {
 } from "@/app/lib/live/router";
 import { Buffer } from "buffer";
 
-const ORACLE_EXPONENT = 8;
-const ORACLE_MAX_AGE_SECONDS = 2;
-const ORACLE_MAX_CONFIDENCE_BPS = 1;
 const PRICE_SCALE = 10 ** ORACLE_EXPONENT;
 const historyByOracle = new Map<string, PricePoint[]>();
-
-interface PriceUpdateAccount {
-  verificationLevel: Record<string, unknown>;
-  priceMessage: {
-    feedId: number[];
-    price: { toString(): string };
-    conf: { toString(): string };
-    exponent: number;
-    publishTime: { toString(): string };
-  };
-  postedSlot: { toString(): string };
-}
-
-const priceUpdateIdl = {
-  address: ORACLE_PROGRAM_ID.toBase58(),
-  metadata: {
-    name: "magicblock_pricing_oracle_view",
-    version: "0.1.0",
-    spec: "0.1.0",
-  },
-  instructions: [],
-  accounts: [
-    {
-      name: "PriceUpdateV2",
-      discriminator: [...accountDiscriminator("PriceUpdateV2")],
-    },
-  ],
-  types: [
-    {
-      name: "PriceUpdateV2",
-      type: {
-        kind: "struct",
-        fields: [
-          { name: "writeAuthority", type: "pubkey" },
-          { name: "verificationLevel", type: { defined: { name: "VerificationLevel" } } },
-          { name: "priceMessage", type: { defined: { name: "PriceFeedMessage" } } },
-          { name: "postedSlot", type: "u64" },
-        ],
-      },
-    },
-    {
-      name: "VerificationLevel",
-      type: {
-        kind: "enum",
-        variants: [
-          { name: "Partial", fields: [{ name: "numSignatures", type: "u8" }] },
-          { name: "Full" },
-        ],
-      },
-    },
-    {
-      name: "PriceFeedMessage",
-      type: {
-        kind: "struct",
-        fields: [
-          { name: "feedId", type: { array: ["u8", 32] } },
-          { name: "price", type: "i64" },
-          { name: "conf", type: "u64" },
-          { name: "exponent", type: "i32" },
-          { name: "publishTime", type: "i64" },
-          { name: "prevPublishTime", type: "i64" },
-          { name: "emaPrice", type: "i64" },
-          { name: "emaConf", type: "u64" },
-        ],
-      },
-    },
-  ],
-} as Idl;
-
-const priceCoder = new BorshAccountsCoder(priceUpdateIdl);
-
-function asBytes(value: Uint8Array | number[]): Uint8Array {
-  return value instanceof Uint8Array ? value : Uint8Array.from(value);
-}
-
-function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
-}
-
-export function decodeOraclePrice(
-  data: Buffer,
-  expectedFeedId: Uint8Array,
-  nowSeconds: number,
-): { displayPrice: number; rawPrice: bigint; ageSeconds: number } {
-  const update = priceCoder.decode("PriceUpdateV2", data) as PriceUpdateAccount;
-  const message = update.priceMessage;
-  const rawPrice = BigInt(message.price.toString());
-  const confidence = BigInt(message.conf.toString());
-  const publishTime = Number(message.publishTime.toString());
-  const postedSlot = BigInt(update.postedSlot.toString());
-  const ageSeconds = nowSeconds - publishTime;
-
-  if (!bytesEqual(asBytes(message.feedId), expectedFeedId)) {
-    throw new Error("Oracle feed ID does not match the configured Market");
-  }
-  if (message.exponent !== ORACLE_EXPONENT) {
-    throw new Error(`Oracle exponent ${message.exponent} does not match ${ORACLE_EXPONENT}`);
-  }
-  const fullyVerified =
-    "full" in update.verificationLevel || "Full" in update.verificationLevel;
-  if (!fullyVerified || postedSlot === 0n) {
-    throw new Error("Oracle update is not fully verified and posted");
-  }
-  if (rawPrice <= 0n || ageSeconds < 0 || ageSeconds > ORACLE_MAX_AGE_SECONDS) {
-    throw new Error(`Oracle update is stale or invalid (${ageSeconds.toFixed(1)}s old)`);
-  }
-  if (confidence * 10_000n > rawPrice * BigInt(ORACLE_MAX_CONFIDENCE_BPS)) {
-    throw new Error("Oracle confidence interval exceeds the market limit");
-  }
-
-  return { displayPrice: Number(rawPrice) / PRICE_SCALE, rawPrice, ageSeconds };
-}
 
 function updateHistory(oracle: string, price: number, now: number): PricePoint[] {
   const current = historyByOracle.get(oracle) ?? [];
@@ -287,6 +174,8 @@ export async function readLiveSnapshot(walletAddress?: string): Promise<MarketSn
     plays,
     capturedAt: now,
     erEndpoint,
-    notice: "Live mode · wallet-signed plays enabled",
+    oracleAddress: oracleAddress.toBase58(),
+    oracleFeedId: Buffer.from(market.oracleFeedId).toString("hex"),
+    notice: "Live mode · oracle websocket ready",
   };
 }

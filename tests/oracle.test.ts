@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { accountDiscriminator } from "@/app/lib/live/decode";
-import { decodeOraclePrice } from "@/app/lib/live/read-snapshot";
+import { decodeOraclePrice } from "@/app/lib/live/oracle";
 
 function fullPriceUpdate(feedId: Buffer, publishTime: number): Buffer {
   const data = Buffer.alloc(133);
@@ -25,6 +25,8 @@ describe("MagicBlock PriceUpdateV2 view", () => {
       displayPrice: 118_642.12,
       rawPrice: 11_864_212_000_000n,
       ageSeconds: 1,
+      publishTime: 100,
+      postedSlot: 99n,
     });
   });
 

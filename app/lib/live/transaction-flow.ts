@@ -53,7 +53,7 @@ import {
   protocolConfigPda,
   userPositionsPda,
 } from "@/app/lib/live/pdas";
-import { decodeOraclePrice } from "@/app/lib/live/read-snapshot";
+import { decodeOraclePrice } from "@/app/lib/live/oracle";
 import {
   getDelegationStatus,
   normalizeErEndpoint,

@@ -50,6 +50,8 @@ export interface MarketSnapshot {
   plays: Play[];
   capturedAt: number;
   erEndpoint?: string;
+  oracleAddress?: string;
+  oracleFeedId?: string;
   notice?: string;
 }
 

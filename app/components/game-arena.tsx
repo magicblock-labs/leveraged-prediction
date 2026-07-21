@@ -15,7 +15,7 @@ function compactAddress(address: string): string {
 
 export function GameArena() {
   const wallet = useGameWallet();
-  const { snapshot, error, refreshing, refresh } = useGameSnapshot(wallet.address);
+  const { snapshot, error, oracleError, refreshing, refresh } = useGameSnapshot(wallet.address);
   const transaction = usePlayTransaction(snapshot, refresh);
   const [clock, setClock] = useState<number | null>(null);
   const [demoPlays, setDemoPlays] = useState<Play[]>([]);
@@ -108,6 +108,7 @@ export function GameArena() {
       </header>
 
       {error ? <div className="system-banner error" role="alert"><strong>LIVE UPDATE PAUSED</strong><span>{error}</span><button onClick={() => void refresh()} type="button">Retry</button></div> : null}
+      {oracleError ? <div className="system-banner warning" role="status"><strong>REAL-TIME FEED DEGRADED</strong><span>{oracleError} · snapshot fallback remains active</span></div> : null}
       {snapshot.marketMode === "close-only" ? <div className="system-banner warning" role="status"><strong>PLAY PAUSED</strong><span>This market is settling existing positions.</span></div> : null}
 
       <div className="game-board">

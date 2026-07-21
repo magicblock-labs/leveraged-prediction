@@ -40,6 +40,9 @@ application with two data modes:
   in-memory demo plays.
 - `live` reads durable configuration on the base layer, resolves delegated state through the router,
   and reads the Market, typed oracle payload, USDC balance, and `UserPositions` from the returned ER.
+  After the initial snapshot, the chart subscribes directly to that routed ER's oracle account over
+  Solana WebSocket `accountSubscribe`; slower snapshots continue to refresh positions and balances
+  without overwriting a newer streamed price.
   It uses the official Solana wallet adapter for wallet-signed setup and plays, provisions the user's
   `UserPositions` and eSPL balances on the Market validator, verifies router co-location, and preserves
   a durable nonce/salt intent so an ambiguous ER result is checked instead of blindly retried. The
