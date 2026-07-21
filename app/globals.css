@@ -163,11 +163,13 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--cyan); outl
 
 .game-board {
   height: calc(100vh - 76px);
+  min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) clamp(310px, 22vw, 390px);
+  overflow: hidden;
 }
 
-.arena-column { min-width: 0; position: relative; overflow: hidden; }
+.arena-column { min-width: 0; min-height: 0; position: relative; overflow: hidden; }
 .price-arena { position: absolute; inset: 0; overflow: hidden; touch-action: none; cursor: grab; }
 .price-arena:active { cursor: grabbing; }
 .arena-canvas { position: absolute; inset: 0; }
@@ -295,8 +297,10 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--cyan); outl
 
 .plays-rail {
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   border-left: 1px solid rgba(120, 166, 207, .2);
   background: linear-gradient(180deg, rgba(10, 19, 32, .98), rgba(5, 10, 18, .99));
   box-shadow: -12px 0 35px rgba(0,0,0,.2);
@@ -307,7 +311,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--cyan); outl
 .rail-header h2 { margin: 3px 0 0; font-size: 15px; letter-spacing: .08em; }
 .rail-header > strong { font-size: 22px; color: var(--cyan); }
 .rail-header > strong span { color: #536a80; font-size: 13px; }
-.plays-list { flex: 1; overflow-y: auto; padding: 13px; scrollbar-width: thin; scrollbar-color: #2a4258 transparent; }
+.plays-list { min-height: 0; flex: 1; overflow-y: auto; padding: 13px; scrollbar-width: thin; scrollbar-color: #2a4258 transparent; }
 .play-card {
   position: relative;
   padding: 13px;
@@ -391,7 +395,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--cyan); outl
   .hud-actions { justify-content: flex-end; padding: 0 10px; }
   .balance-block { display: none; }
   .wallet-button { min-width: 102px; min-height: 34px; }
-  .game-board { height: auto; min-height: calc(100vh - 112px); display: flex; flex-direction: column; }
+  .game-board { height: auto; min-height: calc(100vh - 112px); display: flex; flex-direction: column; overflow: visible; }
   .arena-column { min-height: 70vh; overflow: visible; }
   .price-arena { bottom: 152px; }
   .arena-labels { bottom: 10px; }

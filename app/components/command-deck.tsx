@@ -6,16 +6,18 @@ import { maximumProfit } from "@/app/lib/domain";
 
 interface CommandDeckProps {
   snapshot: MarketSnapshot;
+  occupiedPositions: number;
   onPlay(direction: Direction, amount: number): void;
 }
 
 const PRESETS = [5, 10, 25];
 
-export function CommandDeck({ snapshot, onPlay }: CommandDeckProps) {
+export function CommandDeck({ snapshot, occupiedPositions, onPlay }: CommandDeckProps) {
   const inputId = useId();
   const [amount, setAmount] = useState(10);
   const liveReadOnly = snapshot.mode === "live";
-  const blocked = liveReadOnly || snapshot.marketMode !== "open" || snapshot.activePositions >= snapshot.maxPositions;
+  const capacityReached = occupiedPositions >= snapshot.maxPositions;
+  const blocked = liveReadOnly || snapshot.marketMode !== "open" || capacityReached;
 
   return (
     <section className="command-deck" aria-label="Play controls">
@@ -75,7 +77,8 @@ export function CommandDeck({ snapshot, onPlay }: CommandDeckProps) {
           <span className="direction-icon" aria-hidden="true">↘</span>
           <span><small>PRICE FINISHES LOWER</small>PLAY DOWN</span>
         </button>
-        {liveReadOnly ? <p className="write-lock">Live reads connected · play submission unlocks in the write slice</p> : null}
+        {capacityReached ? <p className="write-lock">{snapshot.maxPositions}/{snapshot.maxPositions} play slots filled · wait for a result</p> : null}
+        {!capacityReached && liveReadOnly ? <p className="write-lock">Live reads connected · play submission unlocks in the write slice</p> : null}
       </div>
     </section>
   );

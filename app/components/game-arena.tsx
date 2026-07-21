@@ -99,7 +99,7 @@ export function GameArena() {
       <div className="game-board">
         <div className="arena-column">
           <PriceArena snapshot={snapshot} plays={plays} now={now} />
-          <CommandDeck snapshot={snapshot} onPlay={placeDemoPlay} />
+          <CommandDeck snapshot={snapshot} occupiedPositions={plays.length} onPlay={placeDemoPlay} />
         </div>
         <YourPlays plays={plays} now={now} capacity={snapshot.maxPositions} />
       </div>
