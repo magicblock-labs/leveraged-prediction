@@ -30,3 +30,30 @@ per Market while every Market uses the ProtocolConfig USDC mint.
 cargo test -p leveraged-prediction --lib --locked
 anchor build --ignore-keys
 ```
+
+## Frontend
+
+The Phase 05 frontend uses the selected **Chart First — Game Arena** direction. It is a real Next.js
+application with two data modes:
+
+- `fixture` (default) runs the complete read-only UI locally and lets `Play Up`/`Play Down` add safe
+  in-memory demo plays.
+- `live` reads durable configuration on the base layer, resolves delegated state through the router,
+  and reads the Market, typed oracle payload, USDC balance, and `UserPositions` from the returned ER.
+  Transaction submission intentionally remains disabled until the write-path slice adds wallet/session,
+  eSPL onboarding, intent identity, and ambiguous-result recovery together.
+
+```bash
+pnpm install
+cp .env.example .env.local
+pnpm dev
+```
+
+Open `http://127.0.0.1:3000`. Set `LEVERAGED_PREDICTION_DATA_MODE=live` only after the configured
+Market, oracle, and optional user accounts exist on one routed ER. The live adapter fails closed on a
+wrong owner/feed/exponent, partial or unposted verification, stale/future data, excessive confidence,
+or cross-ER account mismatch.
+
+```bash
+pnpm check
+```
