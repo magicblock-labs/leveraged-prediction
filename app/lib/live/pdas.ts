@@ -1,4 +1,5 @@
 import { PublicKey } from "@solana/web3.js";
+import { Buffer } from "buffer";
 
 export function protocolConfigPda(programId: PublicKey): PublicKey {
   return PublicKey.findProgramAddressSync(
@@ -22,6 +23,26 @@ export function userPositionsPda(
 ): PublicKey {
   return PublicKey.findProgramAddressSync(
     [Buffer.from("user_positions"), user.toBuffer()],
+    programId,
+  )[0];
+}
+
+export function feeAuthorityPda(
+  programId: PublicKey,
+  market: PublicKey,
+): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("fee_authority"), market.toBuffer()],
+    programId,
+  )[0];
+}
+
+export function delegationBufferPda(
+  programId: PublicKey,
+  delegatedAccount: PublicKey,
+): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("buffer"), delegatedAccount.toBuffer()],
     programId,
   )[0];
 }

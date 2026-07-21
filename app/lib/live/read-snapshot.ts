@@ -22,6 +22,7 @@ import {
   getDelegationStatus,
   normalizeErEndpoint,
 } from "@/app/lib/live/router";
+import { Buffer } from "buffer";
 
 const ORACLE_EXPONENT = 8;
 const ORACLE_MAX_AGE_SECONDS = 2;
@@ -111,7 +112,7 @@ export function decodeOraclePrice(
   data: Buffer,
   expectedFeedId: Uint8Array,
   nowSeconds: number,
-): { displayPrice: number; ageSeconds: number } {
+): { displayPrice: number; rawPrice: bigint; ageSeconds: number } {
   const update = priceCoder.decode("PriceUpdateV2", data) as PriceUpdateAccount;
   const message = update.priceMessage;
   const rawPrice = BigInt(message.price.toString());
@@ -138,7 +139,7 @@ export function decodeOraclePrice(
     throw new Error("Oracle confidence interval exceeds the market limit");
   }
 
-  return { displayPrice: Number(rawPrice) / PRICE_SCALE, ageSeconds };
+  return { displayPrice: Number(rawPrice) / PRICE_SCALE, rawPrice, ageSeconds };
 }
 
 function updateHistory(oracle: string, price: number, now: number): PricePoint[] {
@@ -218,6 +219,7 @@ export async function readLiveSnapshot(walletAddress?: string): Promise<MarketSn
   );
 
   let walletBalanceUsd: number | null = null;
+  let fallbackClaimableUsd = 0;
   let plays: Play[] = [];
   let normalizedWallet: string | null = null;
   if (walletAddress) {
@@ -252,10 +254,17 @@ export async function readLiveSnapshot(walletAddress?: string): Promise<MarketSn
       const protocol = decodeProtocolConfig(Buffer.from(configInfo.data));
       const collateralMint = config.collateralMint ?? new PublicKey(protocol.collateralMint);
       const userTokenAccount = getAssociatedTokenAddressSync(collateralMint, user);
-      const tokenBalance = await erConnection
-        .getTokenAccountBalance(userTokenAccount, "confirmed")
-        .catch(() => null);
+      const payoutEscrowTokenAccount = getAssociatedTokenAddressSync(
+        collateralMint,
+        positionsAddress,
+        true,
+      );
+      const [tokenBalance, payoutBalance] = await Promise.all([
+        erConnection.getTokenAccountBalance(userTokenAccount, "confirmed").catch(() => null),
+        erConnection.getTokenAccountBalance(payoutEscrowTokenAccount, "confirmed").catch(() => null),
+      ]);
       walletBalanceUsd = tokenBalance?.value.uiAmount ?? null;
+      fallbackClaimableUsd = payoutBalance?.value.uiAmount ?? 0;
     }
   }
 
@@ -274,9 +283,10 @@ export async function readLiveSnapshot(walletAddress?: string): Promise<MarketSn
     maxPositions: 8,
     walletAddress: normalizedWallet,
     walletBalanceUsd,
+    fallbackClaimableUsd,
     plays,
     capturedAt: now,
     erEndpoint,
-    notice: "Live read mode · transaction submission is off",
+    notice: "Live mode · wallet-signed plays enabled",
   };
 }

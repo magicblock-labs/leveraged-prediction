@@ -31,9 +31,13 @@ export function readLiveConfig(): LiveConfig {
 
   return {
     baseRpcEndpoint:
-      process.env.SOLANA_RPC_ENDPOINT ?? "https://rpc.magicblock.app/devnet",
+      process.env.SOLANA_RPC_ENDPOINT ??
+      process.env.NEXT_PUBLIC_SOLANA_RPC_ENDPOINT ??
+      "https://rpc.magicblock.app/devnet",
     routerEndpoint:
-      process.env.ROUTER_ENDPOINT ?? "https://devnet-router.magicblock.app/",
+      process.env.ROUTER_ENDPOINT ??
+      process.env.NEXT_PUBLIC_ROUTER_ENDPOINT ??
+      "https://devnet-router.magicblock.app/",
     programId,
     marketId,
     collateralMint,

@@ -1,4 +1,5 @@
-import { createHash } from "node:crypto";
+import { sha256 } from "@noble/hashes/sha256";
+import { Buffer } from "buffer";
 
 export interface DecodedMarket {
   marketId: number;
@@ -12,6 +13,7 @@ export interface DecodedMarket {
 export interface DecodedCompactPosition {
   marketId: number;
   nonce: number;
+  taskSalt: Uint8Array;
   collateral: number;
   entryPrice: bigint;
   expiresAt: number;
@@ -23,7 +25,9 @@ export interface DecodedProtocolConfig {
 }
 
 function discriminator(name: string): Buffer {
-  return createHash("sha256").update(`account:${name}`).digest().subarray(0, 8);
+  return Buffer.from(
+    sha256(new TextEncoder().encode(`account:${name}`)),
+  ).subarray(0, 8);
 }
 
 function assertAccount(data: Buffer, name: string, minimumLength: number): void {
@@ -68,6 +72,7 @@ export function decodeUserPositions(data: Buffer): DecodedCompactPosition[] {
     return {
       marketId: data.readUInt16LE(offset),
       nonce: data.readUInt32LE(offset + 2),
+      taskSalt: data.subarray(offset + 6, offset + 38),
       collateral: data.readUInt32LE(offset + 38),
       entryPrice: data.readBigInt64LE(offset + 42),
       expiresAt: data.readUInt32LE(offset + 50),

@@ -42,6 +42,7 @@ describe("final ABI account decoders", () => {
       {
         marketId: 7,
         nonce: 42,
+        taskSalt: Buffer.alloc(32, 5),
         collateral: 10_000_000,
         entryPrice: 11_864_212_000_000n,
         expiresAt: 1_800_000_000,

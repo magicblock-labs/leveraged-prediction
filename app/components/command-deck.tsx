@@ -7,17 +7,21 @@ import { maximumProfit } from "@/app/lib/domain";
 interface CommandDeckProps {
   snapshot: MarketSnapshot;
   occupiedPositions: number;
+  busy?: boolean;
+  statusMessage?: string | null;
+  needsRecovery?: boolean;
   onPlay(direction: Direction, amount: number): void;
+  onRecover?(): void;
 }
 
 const PRESETS = [5, 10, 25];
 
-export function CommandDeck({ snapshot, occupiedPositions, onPlay }: CommandDeckProps) {
+export function CommandDeck({ snapshot, occupiedPositions, busy = false, statusMessage, needsRecovery = false, onPlay, onRecover }: CommandDeckProps) {
   const inputId = useId();
   const [amount, setAmount] = useState(10);
-  const liveReadOnly = snapshot.mode === "live";
   const capacityReached = occupiedPositions >= snapshot.maxPositions;
-  const blocked = liveReadOnly || snapshot.marketMode !== "open" || capacityReached;
+  const marketCapacityReached = snapshot.activePositions >= snapshot.maxPositions;
+  const blocked = busy || needsRecovery || snapshot.marketMode !== "open" || capacityReached || marketCapacityReached;
 
   return (
     <section className="command-deck" aria-label="Play controls">
@@ -78,7 +82,13 @@ export function CommandDeck({ snapshot, occupiedPositions, onPlay }: CommandDeck
           <span><small>PRICE FINISHES LOWER</small>PLAY DOWN</span>
         </button>
         {capacityReached ? <p className="write-lock">{snapshot.maxPositions}/{snapshot.maxPositions} play slots filled · wait for a result</p> : null}
-        {!capacityReached && liveReadOnly ? <p className="write-lock">Live reads connected · play submission unlocks in the write slice</p> : null}
+        {!capacityReached && marketCapacityReached ? <p className="write-lock">Arena is full · wait for a play to settle</p> : null}
+        {!capacityReached && !marketCapacityReached && statusMessage ? (
+          <div className={`write-lock ${needsRecovery ? "needs-action" : ""}`} role="status">
+            <span>{statusMessage}</span>
+            {needsRecovery && onRecover ? <button onClick={onRecover} type="button">CHECK STATUS</button> : null}
+          </div>
+        ) : null}
       </div>
     </section>
   );

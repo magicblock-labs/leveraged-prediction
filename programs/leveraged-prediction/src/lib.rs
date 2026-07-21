@@ -207,8 +207,11 @@ pub mod leveraged_prediction {
         instructions::initialize_user_liquidity::handler(ctx)
     }
 
-    pub fn delegate_user_positions(ctx: Context<DelegateUserPositions>) -> Result<()> {
-        instructions::delegate_user_positions::handler(ctx)
+    pub fn delegate_user_positions(
+        ctx: Context<DelegateUserPositions>,
+        validator: Pubkey,
+    ) -> Result<()> {
+        instructions::delegate_user_positions::handler(ctx, validator)
     }
 
     pub fn delegate_user_liquidity(ctx: Context<DelegateUserLiquidity>) -> Result<()> {
@@ -293,6 +296,16 @@ mod address_tests {
         assert_ne!(
             hydra_crank_address(market, user, 1, [1; 32]),
             hydra_crank_address(market, user, 1, [2; 32])
+        );
+    }
+
+    #[test]
+    fn hydra_crank_derivation_matches_the_typescript_client_vector() {
+        let market = pubkey!("6ME7jFHJkk27zAM7hz2A3V1Y4EeTkcjyZxnekQLtn8V1");
+        let user = pubkey!("11111111111111111111111111111112");
+        assert_eq!(
+            hydra_crank_address(market, user, 7, [1; 32]),
+            pubkey!("2Nq9YJidURjW9VEywc2gEvpsZqQfs1W7GQC97AY3qZCp")
         );
     }
 

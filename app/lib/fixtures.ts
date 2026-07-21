@@ -57,6 +57,7 @@ export function createFixtureSnapshot(now = Date.now()): MarketSnapshot {
     maxPositions: 8,
     walletAddress: "9xKp…2VQm",
     walletBalanceUsd: 248.5,
+    fallbackClaimableUsd: 0,
     plays: [
       makePlay(now, activeExpiry, "fixture-up", "up", 10, now < activeExpiry ? "active" : "settling"),
       makePlay(now, settlingExpiry, "fixture-down", "down", 5, "settling"),

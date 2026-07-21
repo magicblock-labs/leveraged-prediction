@@ -23,6 +23,7 @@ describe("MagicBlock PriceUpdateV2 view", () => {
     const feedId = Buffer.alloc(32, 7);
     expect(decodeOraclePrice(fullPriceUpdate(feedId, 100), feedId, 101)).toEqual({
       displayPrice: 118_642.12,
+      rawPrice: 11_864_212_000_000n,
       ageSeconds: 1,
     });
   });

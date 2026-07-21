@@ -293,7 +293,9 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--cyan); outl
 .direction-icon { font-size: 34px; font-weight: 500; }
 .play-button > span:last-child { display: flex; flex-direction: column; align-items: flex-start; }
 .play-button small { font-size: 7px; letter-spacing: .15em; opacity: .73; margin-bottom: 3px; }
-.write-lock { position: absolute; left: 0; right: 0; bottom: -10px; text-align: center; margin: 0; color: var(--amber); font-size: 8px; font-weight: 700; letter-spacing: .05em; }
+.write-lock { position: absolute; left: 0; right: 0; bottom: -10px; display: flex; align-items: center; justify-content: center; gap: 7px; text-align: center; margin: 0; color: var(--amber); font-size: 8px; font-weight: 700; letter-spacing: .05em; }
+.write-lock button { min-height: 20px; padding: 0 7px; border: 1px solid rgba(246,195,88,.35); border-radius: 5px; background: rgba(246,195,88,.1); color: var(--amber); font-size: 7px; font-weight: 900; letter-spacing: .08em; cursor: pointer; }
+.write-lock.needs-action { bottom: -12px; }
 
 .plays-rail {
   min-width: 0;
@@ -311,6 +313,12 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--cyan); outl
 .rail-header h2 { margin: 3px 0 0; font-size: 15px; letter-spacing: .08em; }
 .rail-header > strong { font-size: 22px; color: var(--cyan); }
 .rail-header > strong span { color: #536a80; font-size: 13px; }
+.fallback-payout { margin: 12px 13px 0; padding: 11px 12px; display: flex; align-items: center; justify-content: space-between; gap: 10px; border: 1px solid rgba(103,232,249,.3); border-radius: 10px; background: linear-gradient(135deg, rgba(103,232,249,.12), rgba(40,231,167,.07)); box-shadow: inset 0 1px rgba(255,255,255,.03); }
+.fallback-payout div { display: flex; flex-direction: column; gap: 3px; }
+.fallback-payout span { color: var(--cyan); font-size: 8px; font-weight: 850; letter-spacing: .12em; }
+.fallback-payout strong { font-size: 12px; }
+.fallback-payout button { min-height: 32px; padding: 0 12px; border: 1px solid rgba(103,232,249,.45); border-radius: 7px; background: rgba(103,232,249,.14); color: var(--cyan); font-size: 9px; font-weight: 900; letter-spacing: .08em; cursor: pointer; }
+.fallback-payout button:disabled { cursor: wait; opacity: .55; }
 .plays-list { min-height: 0; flex: 1; overflow-y: auto; padding: 13px; scrollbar-width: thin; scrollbar-color: #2a4258 transparent; }
 .play-card {
   position: relative;

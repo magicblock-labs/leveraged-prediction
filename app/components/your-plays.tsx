@@ -7,6 +7,9 @@ interface YourPlaysProps {
   plays: Play[];
   now: number;
   capacity: number;
+  fallbackClaimableUsd?: number;
+  claimBusy?: boolean;
+  onClaimFallback?(): void;
 }
 
 function statusLabel(play: Play, now: number): string {
@@ -28,13 +31,22 @@ function primaryValue(play: Play, now: number): string {
   return "—";
 }
 
-export function YourPlays({ plays, now, capacity }: YourPlaysProps) {
+export function YourPlays({ plays, now, capacity, fallbackClaimableUsd = 0, claimBusy = false, onClaimFallback }: YourPlaysProps) {
   return (
     <aside className="plays-rail" aria-label="Your plays">
       <header className="rail-header">
         <div><span className="eyebrow">LIVE BOARD</span><h2>YOUR PLAYS</h2></div>
         <strong>{Math.min(plays.length, capacity)}<span>/{capacity}</span></strong>
       </header>
+
+      {fallbackClaimableUsd > 0 ? (
+        <section className="fallback-payout" aria-label="Protected payout ready">
+          <div><span>PROTECTED PAYOUT</span><strong>${fallbackClaimableUsd.toFixed(2)} READY</strong></div>
+          <button type="button" disabled={claimBusy} onClick={onClaimFallback}>
+            {claimBusy ? "CLAIMING…" : "CLAIM"}
+          </button>
+        </section>
+      ) : null}
 
       <div className="plays-list">
         {plays.length === 0 ? (

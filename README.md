@@ -40,8 +40,11 @@ application with two data modes:
   in-memory demo plays.
 - `live` reads durable configuration on the base layer, resolves delegated state through the router,
   and reads the Market, typed oracle payload, USDC balance, and `UserPositions` from the returned ER.
-  Transaction submission intentionally remains disabled until the write-path slice adds wallet/session,
-  eSPL onboarding, intent identity, and ambiguous-result recovery together.
+  It uses the official Solana wallet adapter for wallet-signed setup and plays, provisions the user's
+  `UserPositions` and eSPL balances on the Market validator, verifies router co-location, and preserves
+  a durable nonce/salt intent so an ambiguous ER result is checked instead of blindly retried. The
+  current contract still requires the wallet authority for each play; session-key signing needs a
+  separate session-aware program instruction and is not emulated in the browser.
 
 ```bash
 pnpm install

@@ -5,7 +5,8 @@ import { CommandDeck } from "@/app/components/command-deck";
 import { PriceArena } from "@/app/components/price-arena";
 import { YourPlays } from "@/app/components/your-plays";
 import { useGameSnapshot } from "@/app/hooks/use-game-snapshot";
-import { useInjectedWallet } from "@/app/hooks/use-injected-wallet";
+import { useGameWallet } from "@/app/hooks/use-game-wallet";
+import { usePlayTransaction } from "@/app/hooks/use-play-transaction";
 import type { Direction, Play } from "@/app/lib/domain";
 
 function compactAddress(address: string): string {
@@ -13,8 +14,9 @@ function compactAddress(address: string): string {
 }
 
 export function GameArena() {
-  const wallet = useInjectedWallet();
+  const wallet = useGameWallet();
   const { snapshot, error, refreshing, refresh } = useGameSnapshot(wallet.address);
+  const transaction = usePlayTransaction(snapshot, refresh);
   const [clock, setClock] = useState<number | null>(null);
   const [demoPlays, setDemoPlays] = useState<Play[]>([]);
   const [feedback, setFeedback] = useState(true);
@@ -32,7 +34,14 @@ export function GameArena() {
 
   const now = clock ?? snapshot?.capturedAt ?? 0;
 
-  const plays = useMemo(() => [...demoPlays, ...(snapshot?.plays ?? [])], [demoPlays, snapshot?.plays]);
+  const plays = useMemo(
+    () => [
+      ...(transaction.pendingPlay ? [transaction.pendingPlay] : []),
+      ...demoPlays,
+      ...(snapshot?.plays ?? []),
+    ],
+    [demoPlays, snapshot?.plays, transaction.pendingPlay],
+  );
 
   const placeDemoPlay = (direction: Direction, amount: number) => {
     if (!snapshot || snapshot.mode !== "fixture") return;
@@ -53,6 +62,11 @@ export function GameArena() {
     if (feedback && "vibrate" in navigator) navigator.vibrate(24);
   };
 
+  const placePlay = (direction: Direction, amount: number) => {
+    if (snapshot?.mode === "fixture") placeDemoPlay(direction, amount);
+    else void transaction.submit(direction, amount);
+  };
+
   if (!snapshot) {
     return (
       <main className="loading-screen">
@@ -68,7 +82,7 @@ export function GameArena() {
     ? compactAddress(wallet.address)
     : snapshot.mode === "fixture"
       ? snapshot.walletAddress ?? "DEMO"
-      : wallet.available
+        : wallet.available
         ? wallet.connecting ? "CONNECTING…" : "CONNECT WALLET"
         : "WALLET NOT FOUND";
 
@@ -89,7 +103,7 @@ export function GameArena() {
           <button className={`icon-button ${feedback ? "is-on" : ""}`} onClick={() => setFeedback((value) => !value)} type="button" aria-label={`${feedback ? "Disable" : "Enable"} haptic feedback`}>{feedback ? "◖))" : "◖×"}</button>
           <button className="help-button" onClick={() => setShowHelp(true)} type="button">? HOW TO PLAY</button>
           <div className="balance-block"><span>PLAY BALANCE</span><strong>{snapshot.walletBalanceUsd === null ? "—" : `$${snapshot.walletBalanceUsd.toFixed(2)}`}</strong></div>
-          <button className="wallet-button" onClick={() => void wallet.connect()} disabled={snapshot.mode === "fixture" || !wallet.available || wallet.connecting} type="button"><span className="wallet-led" />{walletLabel}</button>
+          <button className="wallet-button" onClick={() => void wallet.connect()} disabled={snapshot.mode === "fixture" || wallet.connecting} type="button"><span className="wallet-led" />{walletLabel}</button>
         </div>
       </header>
 
@@ -99,9 +113,24 @@ export function GameArena() {
       <div className="game-board">
         <div className="arena-column">
           <PriceArena snapshot={snapshot} plays={plays} now={now} />
-          <CommandDeck snapshot={snapshot} occupiedPositions={plays.length} onPlay={placeDemoPlay} />
+          <CommandDeck
+            snapshot={snapshot}
+            occupiedPositions={plays.length}
+            busy={transaction.busy}
+            statusMessage={transaction.statusMessage}
+            needsRecovery={transaction.needsRecovery}
+            onRecover={() => void transaction.recover()}
+            onPlay={placePlay}
+          />
         </div>
-        <YourPlays plays={plays} now={now} capacity={snapshot.maxPositions} />
+        <YourPlays
+          plays={plays}
+          now={now}
+          capacity={snapshot.maxPositions}
+          fallbackClaimableUsd={snapshot.fallbackClaimableUsd}
+          claimBusy={transaction.claimBusy}
+          onClaimFallback={() => void transaction.claimFallback()}
+        />
       </div>
 
       <div className="mode-badge"><span className={refreshing ? "pulse" : ""} />{snapshot.notice}</div>

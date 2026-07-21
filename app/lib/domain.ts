@@ -46,6 +46,7 @@ export interface MarketSnapshot {
   maxPositions: number;
   walletAddress: string | null;
   walletBalanceUsd: number | null;
+  fallbackClaimableUsd: number;
   plays: Play[];
   capturedAt: number;
   erEndpoint?: string;
