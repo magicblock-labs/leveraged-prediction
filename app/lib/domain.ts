@@ -32,7 +32,7 @@ export interface Play {
 }
 
 export interface MarketSnapshot {
-  mode: "fixture" | "live";
+  mode: "live";
   marketId: number;
   marketLabel: string;
   gameLabel: string;

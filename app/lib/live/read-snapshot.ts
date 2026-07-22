@@ -35,11 +35,7 @@ function updateHistory(oracle: string, price: number, now: number): PricePoint[]
     .filter((point) => point.timestamp >= now - 45_000)
     .slice(-120);
   historyByOracle.set(oracle, next);
-  if (next.length > 1) return next;
-  return Array.from({ length: 46 }, (_, index) => ({
-    price,
-    timestamp: now - (45 - index) * 1_000,
-  }));
+  return next;
 }
 
 function toPlay(
@@ -146,11 +142,12 @@ export async function readLiveSnapshot(walletAddress?: string): Promise<MarketSn
         positionsAddress,
         true,
       );
-      const [tokenBalance, payoutBalance] = await Promise.all([
+      const [erTokenBalance, baseTokenBalance, payoutBalance] = await Promise.all([
         erConnection.getTokenAccountBalance(userTokenAccount, "confirmed").catch(() => null),
+        baseConnection.getTokenAccountBalance(userTokenAccount, "confirmed").catch(() => null),
         erConnection.getTokenAccountBalance(payoutEscrowTokenAccount, "confirmed").catch(() => null),
       ]);
-      walletBalanceUsd = tokenBalance?.value.uiAmount ?? null;
+      walletBalanceUsd = erTokenBalance?.value.uiAmount ?? baseTokenBalance?.value.uiAmount ?? null;
       fallbackClaimableUsd = payoutBalance?.value.uiAmount ?? 0;
     }
   }

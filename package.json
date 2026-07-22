@@ -10,6 +10,8 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:oracle:devnet": "LIVE_ORACLE_E2E=1 vitest run tests/devnet-oracle.test.ts --testTimeout=30000",
+    "preflight:devnet": "node scripts/check-devnet.mjs",
     "test:e2e:local": "./scripts/run-local-e2e.sh",
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build"
   },

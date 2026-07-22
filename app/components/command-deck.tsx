@@ -21,7 +21,14 @@ export function CommandDeck({ snapshot, occupiedPositions, busy = false, statusM
   const [amount, setAmount] = useState(10);
   const capacityReached = occupiedPositions >= snapshot.maxPositions;
   const marketCapacityReached = snapshot.activePositions >= snapshot.maxPositions;
-  const blocked = busy || needsRecovery || snapshot.marketMode !== "open" || capacityReached || marketCapacityReached;
+  const walletConnected = snapshot.walletAddress !== null;
+  const hasBalance = snapshot.walletBalanceUsd !== null && snapshot.walletBalanceUsd >= amount;
+  const blocked = busy || needsRecovery || !walletConnected || !hasBalance || snapshot.marketMode !== "open" || capacityReached || marketCapacityReached;
+  const balanceMessage = walletConnected && !hasBalance
+    ? snapshot.walletBalanceUsd === null
+      ? "USDC account setup is not ready"
+      : `You need $${amount.toFixed(2)} USDC to play`
+    : null;
 
   return (
     <section className="command-deck" aria-label="Play controls">
@@ -83,9 +90,9 @@ export function CommandDeck({ snapshot, occupiedPositions, busy = false, statusM
         </button>
         {capacityReached ? <p className="write-lock">{snapshot.maxPositions}/{snapshot.maxPositions} play slots filled · wait for a result</p> : null}
         {!capacityReached && marketCapacityReached ? <p className="write-lock">Arena is full · wait for a play to settle</p> : null}
-        {!capacityReached && !marketCapacityReached && statusMessage ? (
+        {!capacityReached && !marketCapacityReached && (balanceMessage || statusMessage) ? (
           <div className={`write-lock ${needsRecovery ? "needs-action" : ""}`} role="status">
-            <span>{statusMessage}</span>
+            <span>{balanceMessage ?? statusMessage}</span>
             {needsRecovery && onRecover ? <button onClick={onRecover} type="button">CHECK STATUS</button> : null}
           </div>
         ) : null}

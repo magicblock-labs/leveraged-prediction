@@ -33,12 +33,8 @@ anchor build --ignore-keys
 
 ## Frontend
 
-The Phase 05 frontend uses the selected **Chart First — Game Arena** direction. It is a real Next.js
-application with two data modes:
-
-- `fixture` (default) runs the complete read-only UI locally and lets `Play Up`/`Play Down` add safe
-  in-memory demo plays.
-- `live` reads durable configuration on the base layer, resolves delegated state through the router,
+The Phase 05 frontend uses the selected **Chart First — Game Arena** direction. It always reads live
+state: durable configuration on the base layer, delegated routing from the Magic Router,
   and reads the Market, typed oracle payload, USDC balance, and `UserPositions` from the returned ER.
   After the initial snapshot, the chart subscribes directly to that routed ER's oracle account over
   Solana WebSocket `accountSubscribe`; slower snapshots continue to refresh positions and balances
@@ -66,8 +62,8 @@ cp .env.example .env.local
 pnpm dev
 ```
 
-Open `http://127.0.0.1:3000`. Set `LEVERAGED_PREDICTION_DATA_MODE=live` only after the configured
-Market, oracle, and optional user accounts exist on one routed ER. The live adapter fails closed on a
+Open `http://127.0.0.1:3000`. The configured Market and oracle must exist on one routed ER; the app
+has no synthetic-price or in-memory-position fallback. The live adapter fails closed on a
 wrong owner/feed/exponent, partial or unposted verification, stale/future data, excessive confidence,
 or cross-ER account mismatch.
 
@@ -86,3 +82,10 @@ pnpm test:e2e:local
 
 The harness seeds liquidity above the exact protocol minimum because eSPL transfers consume a small
 amount before the pool's spendable balance reaches the ER.
+
+The public devnet oracle probe subscribes to MagicBlock's canonical BTC/USD Pyth Lazer feed directly
+over the ER websocket and requires multiple monotonically newer updates:
+
+```bash
+pnpm test:oracle:devnet
+```

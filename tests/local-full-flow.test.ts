@@ -44,6 +44,7 @@ import { getDelegationStatus, normalizeErEndpoint } from "@/app/lib/live/router"
 import { openPositionFlow, type TransactionProgress } from "@/app/lib/live/transaction-flow";
 
 const enabled = process.env.LOCAL_E2E === "1";
+const keepLocalServices = process.env.KEEP_LOCAL_SERVICES === "1";
 const suite = enabled ? describe : describe.skip;
 const BASE_RPC = "http://127.0.0.1:8899";
 const ER_RPC = "http://127.0.0.1:7799";
@@ -287,6 +288,12 @@ suite("local wallet-to-settlement flow", () => {
   });
 
   afterAll(async () => {
+    if (keepLocalServices) {
+      cranker?.stdout?.destroy();
+      cranker?.stderr?.destroy();
+      cranker?.unref();
+      return;
+    }
     if (cranker && !cranker.killed) cranker.kill("SIGTERM");
     if (crankerDirectory) await rm(crankerDirectory, { recursive: true, force: true });
   });
@@ -433,7 +440,10 @@ suite("local wallet-to-settlement flow", () => {
       "--ws-url", ER_WS,
       "--keypair", crankerPath,
       "--prometheus-port", "9898",
-    ], { stdio: ["ignore", "pipe", "pipe"] });
+    ], { detached: keepLocalServices, stdio: ["ignore", "pipe", "pipe"] });
+    if (process.env.LOCAL_HYDRA_PID_FILE && cranker.pid) {
+      await writeFile(process.env.LOCAL_HYDRA_PID_FILE, String(cranker.pid));
+    }
     cranker.stdout?.on("data", (data) => { crankerLogs += String(data); });
     cranker.stderr?.on("data", (data) => { crankerLogs += String(data); });
     await eventually("Hydra cranker health", async () => {

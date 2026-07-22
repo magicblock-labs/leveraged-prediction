@@ -7,8 +7,21 @@ WORKSPACE_ROOT="$(cd "$REPO_ROOT/.." && pwd)"
 RUN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/leveraged-prediction-e2e.XXXXXX")"
 STACK_LOG="$RUN_DIR/mb-stack.log"
 STACK_PID=""
+COMPLETED=0
+KEEP_LOCAL_SERVICES="${KEEP_LOCAL_SERVICES:-0}"
+LOCAL_STACK_PID_FILE="${LOCAL_STACK_PID_FILE:-}"
+LOCAL_HYDRA_PID_FILE="${LOCAL_HYDRA_PID_FILE:-$RUN_DIR/hydra.pid}"
 
 cleanup() {
+  if [[ "$KEEP_LOCAL_SERVICES" == "1" && "$COMPLETED" == "1" ]]; then
+    return
+  fi
+  if [[ -f "$LOCAL_HYDRA_PID_FILE" ]]; then
+    HYDRA_PID="$(<"$LOCAL_HYDRA_PID_FILE")"
+    if [[ "$HYDRA_PID" =~ ^[0-9]+$ ]] && kill -0 "$HYDRA_PID" 2>/dev/null; then
+      kill "$HYDRA_PID" 2>/dev/null || true
+    fi
+  fi
   if [[ -n "$STACK_PID" ]] && kill -0 "$STACK_PID" 2>/dev/null; then
     kill "$STACK_PID" 2>/dev/null || true
     wait "$STACK_PID" 2>/dev/null || true
@@ -34,6 +47,9 @@ anchor build --ignore-keys
     "$WORKSPACE_ROOT/hydra/target/deploy/hydra_ephemeral.so"
 ) >"$STACK_LOG" 2>&1 &
 STACK_PID=$!
+if [[ -n "$LOCAL_STACK_PID_FILE" ]]; then
+  printf '%s\n' "$STACK_PID" >"$LOCAL_STACK_PID_FILE"
+fi
 
 for _ in {1..60}; do
   if curl -fs -X POST http://127.0.0.1:8899 \
@@ -68,5 +84,12 @@ if [[ "$ER_READY" -ne 1 ]]; then
 fi
 
 LOCAL_E2E=1 \
+KEEP_LOCAL_SERVICES="$KEEP_LOCAL_SERVICES" \
+LOCAL_HYDRA_PID_FILE="$LOCAL_HYDRA_PID_FILE" \
 HYDRA_CRANKER_BIN="$WORKSPACE_ROOT/hydra/target/debug/hydra-cranker" \
 pnpm exec vitest run tests/local-full-flow.test.ts --testTimeout=180000
+
+COMPLETED=1
+if [[ "$KEEP_LOCAL_SERVICES" == "1" ]]; then
+  printf 'Local protocol ready · stack pid %s · runtime %s\n' "$STACK_PID" "$RUN_DIR"
+fi

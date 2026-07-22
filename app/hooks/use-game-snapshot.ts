@@ -12,6 +12,13 @@ import {
 import { readClientLiveConfig } from "@/app/lib/live/client-config";
 import { authorizeErAccess } from "@/app/lib/live/er-access";
 
+const configuredLivePollInterval = Number(
+  process.env.NEXT_PUBLIC_LIVE_SNAPSHOT_INTERVAL_MS ?? "3000",
+);
+const livePollInterval = Number.isFinite(configuredLivePollInterval)
+  ? Math.max(100, configuredLivePollInterval)
+  : 3_000;
+
 function oracleStreamKey(snapshot: MarketSnapshot): string | null {
   if (
     snapshot.mode !== "live" ||
@@ -85,7 +92,7 @@ export function useGameSnapshot(walletAddress: string | null) {
     const timeout = window.setTimeout(() => void refresh(), 0);
     const interval = window.setInterval(
       () => void refresh(),
-      snapshot?.mode === "live" ? 3_000 : 750,
+      snapshot?.mode === "live" ? livePollInterval : 750,
     );
     return () => {
       window.clearTimeout(timeout);

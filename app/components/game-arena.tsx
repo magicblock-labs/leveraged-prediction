@@ -7,7 +7,7 @@ import { YourPlays } from "@/app/components/your-plays";
 import { useGameSnapshot } from "@/app/hooks/use-game-snapshot";
 import { useGameWallet } from "@/app/hooks/use-game-wallet";
 import { usePlayTransaction } from "@/app/hooks/use-play-transaction";
-import type { Direction, Play } from "@/app/lib/domain";
+import type { Direction } from "@/app/lib/domain";
 
 function compactAddress(address: string): string {
   return address.length > 12 ? `${address.slice(0, 4)}…${address.slice(-4)}` : address;
@@ -18,7 +18,6 @@ export function GameArena() {
   const { snapshot, error, oracleError, refreshing, refresh } = useGameSnapshot(wallet.address);
   const transaction = usePlayTransaction(snapshot, refresh);
   const [clock, setClock] = useState<number | null>(null);
-  const [demoPlays, setDemoPlays] = useState<Play[]>([]);
   const [feedback, setFeedback] = useState(true);
   const [showHelp, setShowHelp] = useState(false);
 
@@ -37,34 +36,14 @@ export function GameArena() {
   const plays = useMemo(
     () => [
       ...(transaction.pendingPlay ? [transaction.pendingPlay] : []),
-      ...demoPlays,
       ...(snapshot?.plays ?? []),
     ],
-    [demoPlays, snapshot?.plays, transaction.pendingPlay],
+    [snapshot?.plays, transaction.pendingPlay],
   );
 
-  const placeDemoPlay = (direction: Direction, amount: number) => {
-    if (!snapshot || snapshot.mode !== "fixture") return;
-    const openedAt = Date.now();
-    const play: Play = {
-      id: `demo-${openedAt}`,
-      marketId: snapshot.marketId,
-      direction,
-      collateralUsd: amount,
-      entryPrice: snapshot.currentPrice,
-      openedAt,
-      expiresAt: openedAt + 10_000,
-      refundAt: openedAt + 20_000,
-      status: "active",
-      estimateUsd: 0,
-    };
-    setDemoPlays((current) => [play, ...current].slice(0, 5));
-    if (feedback && "vibrate" in navigator) navigator.vibrate(24);
-  };
-
   const placePlay = (direction: Direction, amount: number) => {
-    if (snapshot?.mode === "fixture") placeDemoPlay(direction, amount);
-    else void transaction.submit(direction, amount);
+    if (feedback && "vibrate" in navigator) navigator.vibrate(24);
+    void transaction.submit(direction, amount);
   };
 
   if (!snapshot) {
@@ -80,11 +59,9 @@ export function GameArena() {
 
   const walletLabel = wallet.address
     ? compactAddress(wallet.address)
-    : snapshot.mode === "fixture"
-      ? snapshot.walletAddress ?? "DEMO"
-        : wallet.available
-        ? wallet.connecting ? "CONNECTING…" : "CONNECT WALLET"
-        : "WALLET NOT FOUND";
+    : wallet.available
+      ? wallet.connecting ? "CONNECTING…" : "CONNECT WALLET"
+      : "WALLET NOT FOUND";
 
   return (
     <main className="game-shell" data-mode={snapshot.mode}>
@@ -103,7 +80,7 @@ export function GameArena() {
           <button className={`icon-button ${feedback ? "is-on" : ""}`} onClick={() => setFeedback((value) => !value)} type="button" aria-label={`${feedback ? "Disable" : "Enable"} haptic feedback`}>{feedback ? "◖))" : "◖×"}</button>
           <button className="help-button" onClick={() => setShowHelp(true)} type="button">? HOW TO PLAY</button>
           <div className="balance-block"><span>PLAY BALANCE</span><strong>{snapshot.walletBalanceUsd === null ? "—" : `$${snapshot.walletBalanceUsd.toFixed(2)}`}</strong></div>
-          <button className="wallet-button" onClick={() => void wallet.connect()} disabled={snapshot.mode === "fixture" || wallet.connecting} type="button"><span className="wallet-led" />{walletLabel}</button>
+          <button className="wallet-button" onClick={() => void wallet.connect()} disabled={wallet.connecting} type="button"><span className="wallet-led" />{walletLabel}</button>
         </div>
       </header>
 
