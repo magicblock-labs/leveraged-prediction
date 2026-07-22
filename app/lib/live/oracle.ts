@@ -7,6 +7,11 @@ export const ORACLE_EXPONENT = 8;
 export const ORACLE_MAX_AGE_SECONDS = 2;
 const ORACLE_MAX_CONFIDENCE_BPS = 1;
 const PRICE_SCALE = 10 ** ORACLE_EXPONENT;
+const PYTH_PRICE_UPDATE_DISCRIMINATOR = accountDiscriminator("PriceUpdateV2");
+const PRICE_UPDATE_DISCRIMINATORS = [
+  Buffer.from([234, 161, 14, 36, 172, 239, 15, 232]),
+  PYTH_PRICE_UPDATE_DISCRIMINATOR,
+];
 
 interface PriceUpdateAccount {
   verificationLevel: Record<string, unknown>;
@@ -39,7 +44,7 @@ const priceUpdateIdl = {
   accounts: [
     {
       name: "PriceUpdateV2",
-      discriminator: [...accountDiscriminator("PriceUpdateV2")],
+      discriminator: [...PYTH_PRICE_UPDATE_DISCRIMINATOR],
     },
   ],
   types: [
@@ -99,7 +104,14 @@ export function decodeOraclePrice(
   expectedFeedId: Uint8Array,
   nowSeconds: number,
 ): OraclePrice {
-  const update = priceCoder.decode("PriceUpdateV2", data) as PriceUpdateAccount;
+  if (data.length < 133) throw new Error("Oracle price account has invalid data");
+  const discriminator = data.subarray(0, 8);
+  if (!PRICE_UPDATE_DISCRIMINATORS.some((candidate) => discriminator.equals(candidate))) {
+    throw new Error("Oracle account is not a recognized price-update account");
+  }
+  const canonicalData = Buffer.from(data);
+  PYTH_PRICE_UPDATE_DISCRIMINATOR.copy(canonicalData, 0);
+  const update = priceCoder.decode("PriceUpdateV2", canonicalData) as PriceUpdateAccount;
   const message = update.priceMessage;
   const rawPrice = BigInt(message.price.toString());
   const confidence = BigInt(message.conf.toString());

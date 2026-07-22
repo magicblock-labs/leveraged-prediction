@@ -1,6 +1,7 @@
 import {
   DELEGATION_PROGRAM_ID,
   EPHEMERAL_SPL_TOKEN_PROGRAM_ID,
+  createDelegateInstruction,
   decodeEphemeralAta,
   delegateEphemeralAtaIx,
   depositSplTokensIx,
@@ -15,13 +16,17 @@ import {
 } from "@magicblock-labs/ephemeral-rollups-sdk";
 import type { WalletContextState } from "@solana/wallet-adapter-react";
 import {
+  createAssociatedTokenAccountIdempotentInstruction,
   getAccount,
   getAssociatedTokenAddressSync,
 } from "@solana/spl-token";
 import {
   Connection,
+  Keypair,
   PublicKey,
+  SystemProgram,
   Transaction,
+  type Signer,
   type TransactionInstruction,
 } from "@solana/web3.js";
 import type { Direction } from "@/app/lib/domain";
@@ -64,12 +69,15 @@ import { Buffer } from "buffer";
 const MAX_POSITION_MINOR = 1_000_000_000n;
 const ROUTE_TIMEOUT_MS = 20_000;
 const TOKEN_TIMEOUT_MS = 20_000;
+const ER_FEE_PAYER_LAMPORTS = 10_000_000;
+const feePayerSessions = new Map<string, Keypair>();
 
 export type TransactionPhase =
   | "checking"
   | "initializing-positions"
   | "provisioning-payout"
   | "depositing-collateral"
+  | "preparing-fee-payer"
   | "verifying-route"
   | "submitting"
   | "confirming"
@@ -89,18 +97,20 @@ export async function claimFallbackPayoutFlow(
 ): Promise<string | null> {
   onStatus("Checking the protected payout balance…");
   const context = await loadWriteContext(user);
-  const [userEata] = deriveEphemeralAta(context.user, context.collateralMint);
-  const [fallbackEata] = deriveEphemeralAta(context.userPositions, context.collateralMint);
-  await assertRouteSet(context, [context.userPositions, userEata, fallbackEata]);
-
   const userTokenAccount = getAssociatedTokenAddressSync(context.collateralMint, context.user);
   const payoutEscrowTokenAccount = getAssociatedTokenAddressSync(
     context.collateralMint,
     context.userPositions,
     true,
   );
+  await assertRouteSet(context, [
+    context.userPositions,
+    userTokenAccount,
+    payoutEscrowTokenAccount,
+  ]);
   const payout = await getAccount(context.erConnection, payoutEscrowTokenAccount, "confirmed");
   if (payout.amount === 0n) return null;
+  const feePayer = await ensureErFeePayer(context, sendTransaction, onStatus);
   onStatus(`Claiming ${Number(payout.amount) / 1_000_000} USDC…`);
 
   const instruction = claimFallbackPayoutInstruction(context.programId, {
@@ -122,6 +132,7 @@ export async function claimFallbackPayoutFlow(
         submittedSignature = signature;
         onStatus("Claim sent. Confirming your balance…");
       },
+      { feePayer: feePayer.publicKey, additionalSigners: [feePayer] },
     );
   } catch (cause) {
     await sleep(300);
@@ -203,10 +214,11 @@ async function sendAndConfirm(
   sendTransaction: SendTransaction,
   instructions: TransactionInstruction[],
   onSubmitted?: (signature: string) => void,
+  options?: { feePayer?: PublicKey; additionalSigners?: Signer[] },
 ): Promise<string> {
   const latest = await connection.getLatestBlockhash("confirmed");
   const transaction = new Transaction({
-    feePayer: user,
+    feePayer: options?.feePayer ?? user,
     blockhash: latest.blockhash,
     lastValidBlockHeight: latest.lastValidBlockHeight,
   }).add(...instructions);
@@ -214,16 +226,77 @@ async function sendAndConfirm(
     preflightCommitment: "confirmed",
     skipPreflight: false,
     maxRetries: 3,
+    signers: options?.additionalSigners,
   });
   onSubmitted?.(signature);
-  const confirmation = await connection.confirmTransaction(
-    { signature, ...latest },
-    "confirmed",
-  );
-  if (confirmation.value.err) {
-    throw new Error(`Transaction ${signature} failed: ${JSON.stringify(confirmation.value.err)}`);
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    const status = await connection.getSignatureStatus(signature, {
+      searchTransactionHistory: true,
+    });
+    if (status.value?.err) {
+      throw new Error(`Transaction ${signature} failed: ${JSON.stringify(status.value.err)}`);
+    }
+    if (
+      status.value?.confirmationStatus === "confirmed" ||
+      status.value?.confirmationStatus === "finalized"
+    ) {
+      return signature;
+    }
+    await sleep(200);
   }
-  return signature;
+  throw new Error(`Transaction ${signature} was not confirmed within 15 seconds`);
+}
+
+async function ensureErFeePayer(
+  context: LiveWriteContext,
+  sendTransaction: SendTransaction,
+  onStatus: (message: string) => void,
+  onSubmitted?: (signature: string) => void,
+): Promise<Keypair> {
+  const key = `${context.user.toBase58()}:${context.validator.toBase58()}`;
+  const existing = feePayerSessions.get(key);
+  if (existing) {
+    const info = await context.baseConnection.getAccountInfo(existing.publicKey, "confirmed");
+    if (info?.owner.equals(DELEGATION_PROGRAM_ID)) {
+      await waitForRoute(context.routerEndpoint, existing.publicKey, context.erEndpoint);
+      return existing;
+    }
+    feePayerSessions.delete(key);
+  }
+
+  onStatus("Preparing a fast fee account for this arena…");
+  const feePayer = Keypair.generate();
+  await sendAndConfirm(
+    context.baseConnection,
+    context.user,
+    sendTransaction,
+    [
+      SystemProgram.transfer({
+        fromPubkey: context.user,
+        toPubkey: feePayer.publicKey,
+        lamports: ER_FEE_PAYER_LAMPORTS,
+      }),
+      SystemProgram.assign({
+        accountPubkey: feePayer.publicKey,
+        programId: DELEGATION_PROGRAM_ID,
+      }),
+      createDelegateInstruction(
+        {
+          payer: context.user,
+          delegatedAccount: feePayer.publicKey,
+          ownerProgram: SystemProgram.programId,
+          validator: context.validator,
+        },
+        { validator: context.validator },
+      ),
+    ],
+    onSubmitted,
+    { additionalSigners: [feePayer] },
+  );
+  await waitForRoute(context.routerEndpoint, feePayer.publicKey, context.erEndpoint);
+  feePayerSessions.set(key, feePayer);
+  return feePayer;
 }
 
 async function waitForRoute(
@@ -377,10 +450,23 @@ async function ensureFallbackBalance(
     context.userPositions,
     true,
   );
-  const info = await context.baseConnection.getAccountInfo(eata, "confirmed");
+  const [info, ataInfo] = await context.baseConnection.getMultipleAccountsInfo(
+    [eata, ata],
+    "confirmed",
+  );
+  const instructions: TransactionInstruction[] = [];
+  if (!ataInfo) {
+    instructions.push(
+      createAssociatedTokenAccountIdempotentInstruction(
+        context.user,
+        ata,
+        context.userPositions,
+        context.collateralMint,
+      ),
+    );
+  }
   if (!info || info.owner.equals(EPHEMERAL_SPL_TOKEN_PROGRAM_ID)) {
     report(onProgress, intent, "provisioning-payout", "Preparing your protected payout account…");
-    const instructions: TransactionInstruction[] = [];
     if (!info) {
       instructions.push(
         initEphemeralAtaIx(eata, context.userPositions, context.collateralMint, context.user),
@@ -392,6 +478,10 @@ async function ensureFallbackBalance(
       }
     }
     instructions.push(delegateEphemeralAtaIx(context.user, eata, context.validator));
+  } else if (!info.owner.equals(DELEGATION_PROGRAM_ID)) {
+    throw new Error("Fallback eSPL balance has an unexpected owner");
+  }
+  if (instructions.length > 0) {
     await sendAndConfirm(
       context.baseConnection,
       context.user,
@@ -404,10 +494,8 @@ async function ensureFallbackBalance(
         });
       },
     );
-  } else if (!info.owner.equals(DELEGATION_PROGRAM_ID)) {
-    throw new Error("Fallback eSPL balance has an unexpected owner");
   }
-  await waitForRoute(context.routerEndpoint, eata, context.erEndpoint);
+  await waitForRoute(context.routerEndpoint, ata, context.erEndpoint);
   await waitForTokenAmount(context.erConnection, ata, 0n);
   const account = await getAccount(context.erConnection, ata, "confirmed");
   if (!account.owner.equals(context.userPositions) || !account.mint.equals(context.collateralMint)) {
@@ -425,7 +513,7 @@ async function ensureCollateralBalance(
 ): Promise<{ intent: OpenPositionIntent; eata: PublicKey; ata: PublicKey }> {
   const [eata] = deriveEphemeralAta(context.user, context.collateralMint);
   const ata = getAssociatedTokenAddressSync(context.collateralMint, context.user);
-  const routed = await getDelegationStatus(context.routerEndpoint, eata.toBase58()).catch(() => null);
+  const routed = await getDelegationStatus(context.routerEndpoint, ata.toBase58()).catch(() => null);
   const isDelegated = Boolean(routed?.isDelegated && routed.fqdn);
   let erAmount = 0n;
   if (isDelegated) {
@@ -509,7 +597,7 @@ async function ensureCollateralBalance(
       });
     },
   );
-  await waitForRoute(context.routerEndpoint, eata, context.erEndpoint);
+  await waitForRoute(context.routerEndpoint, ata, context.erEndpoint);
   await waitForTokenAmount(context.erConnection, ata, amount);
   return { intent, eata, ata };
 }
@@ -539,6 +627,18 @@ async function positionMatchesIntent(
       position.nonce === intent.nonce &&
       sameBytes(position.taskSalt, salt),
   );
+}
+
+async function waitForPositionMatch(
+  context: LiveWriteContext,
+  intent: OpenPositionIntent,
+): Promise<boolean> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    if (await positionMatchesIntent(context, intent)) return true;
+    await sleep(200);
+  }
+  return false;
 }
 
 export async function recoverOpenPositionIntent(
@@ -642,17 +742,29 @@ export async function openPositionFlow(
       onProgress,
     );
     intent = collateralBalance.intent;
+    report(onProgress, intent, "preparing-fee-payer", "Preparing a fast fee account for this arena…");
+    const feePayer = await ensureErFeePayer(
+      context,
+      sendTransaction,
+      () => undefined,
+      (signature) => {
+        intent = updateIntent(intent, {
+          status: "onboarding",
+          baseSignatures: [...intent.baseSignatures, signature],
+        });
+      },
+    );
 
     report(onProgress, intent, "verifying-route", "Verifying every play account is in the same arena…");
-    const [poolEata] = deriveEphemeralAta(context.market, context.collateralMint);
-    const [feeEata] = deriveEphemeralAta(context.feeAuthority, context.collateralMint);
+    const poolTokenAccount = getAssociatedTokenAddressSync(context.collateralMint, context.market, true);
+    const feeTokenAccount = getAssociatedTokenAddressSync(context.collateralMint, context.feeAuthority, true);
     await assertRouteSet(context, [
       context.market,
       context.userPositions,
-      collateralBalance.eata,
-      fallback.eata,
-      poolEata,
-      feeEata,
+      collateralBalance.ata,
+      fallback.ata,
+      poolTokenAccount,
+      feeTokenAccount,
       context.oracle,
     ]);
 
@@ -675,8 +787,6 @@ export async function openPositionFlow(
       Math.floor(Date.now() / 1_000),
     );
 
-    const poolTokenAccount = getAssociatedTokenAddressSync(context.collateralMint, context.market, true);
-    const feeTokenAccount = getAssociatedTokenAddressSync(context.collateralMint, context.feeAuthority, true);
     const [pool, fee, userToken, payout] = await Promise.all([
       getAccount(context.erConnection, poolTokenAccount, "confirmed"),
       getAccount(context.erConnection, feeTokenAccount, "confirmed"),
@@ -702,6 +812,7 @@ export async function openPositionFlow(
       context.programId,
       {
         user: context.user,
+        taskPayer: feePayer.publicKey,
         protocolConfig: context.protocolConfig,
         market: context.market,
         userPositions: context.userPositions,
@@ -740,10 +851,11 @@ export async function openPositionFlow(
           });
           report(onProgress, intent, "confirming", "Play sent. Confirming it in Your Plays…");
         },
+        { feePayer: feePayer.publicKey, additionalSigners: [feePayer] },
       );
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "ER submission result is unknown";
-      if (!intent.erSignature && /reject|declin|cancel/i.test(message)) {
+      if (!intent.erSignature) {
         intent = updateIntent(intent, { status: "failed", message });
         throw cause;
       }
@@ -756,7 +868,7 @@ export async function openPositionFlow(
     if (intent.erSignature !== signature) {
       intent = updateIntent(intent, { status: "confirming", erSignature: signature });
     }
-    if (!(await positionMatchesIntent(context, intent))) {
+    if (!(await waitForPositionMatch(context, intent))) {
       intent = updateIntent(intent, {
         status: "ambiguous",
         message: "The signature confirmed but the position is not visible yet",

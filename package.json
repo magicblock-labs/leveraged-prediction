@@ -10,6 +10,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:e2e:local": "./scripts/run-local-e2e.sh",
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build"
   },
   "dependencies": {
@@ -28,11 +29,13 @@
     "react-dom": "19.2.7"
   },
   "devDependencies": {
+    "@coral-xyz/borsh": "0.31.1",
     "@types/node": "24.10.1",
     "@types/react": "19.2.2",
     "@types/react-dom": "19.2.2",
     "eslint": "9.39.1",
     "eslint-config-next": "16.2.10",
+    "tweetnacl": "1.0.3",
     "typescript": "5.9.3",
     "vitest": "4.1.10"
   }

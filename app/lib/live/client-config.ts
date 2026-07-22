@@ -4,6 +4,8 @@ import { DEFAULT_PROGRAM_ID } from "@/app/lib/live/config";
 export interface ClientLiveConfig {
   baseRpcEndpoint: string;
   routerEndpoint: string;
+  erStreamRpcEndpoint?: string;
+  erStreamWsEndpoint?: string;
   programId: PublicKey;
   marketId: number;
 }
@@ -23,6 +25,8 @@ export function readClientLiveConfig(): ClientLiveConfig {
     routerEndpoint:
       process.env.NEXT_PUBLIC_ROUTER_ENDPOINT ??
       "https://devnet-router.magicblock.app/",
+    erStreamRpcEndpoint: process.env.NEXT_PUBLIC_ER_STREAM_RPC_ENDPOINT,
+    erStreamWsEndpoint: process.env.NEXT_PUBLIC_ER_STREAM_WS_ENDPOINT,
     programId: new PublicKey(
       process.env.NEXT_PUBLIC_LEVERAGED_PREDICTION_PROGRAM_ID ??
         DEFAULT_PROGRAM_ID,

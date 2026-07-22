@@ -36,4 +36,20 @@ describe("MagicBlock PriceUpdateV2 view", () => {
     expect(() => decodeOraclePrice(update, Buffer.alloc(32, 8), 101)).toThrow(/feed ID/);
     expect(() => decodeOraclePrice(update, feedId, 103)).toThrow(/stale or invalid/);
   });
+
+  it("accepts the MagicBlock ephemeral oracle discriminator", () => {
+    const feedId = Buffer.alloc(32, 7);
+    const update = fullPriceUpdate(feedId, 100);
+    Buffer.from([234, 161, 14, 36, 172, 239, 15, 232]).copy(update);
+
+    expect(decodeOraclePrice(update, feedId, 101).rawPrice).toBe(11_864_212_000_000n);
+  });
+
+  it("rejects an unknown account discriminator", () => {
+    const feedId = Buffer.alloc(32, 7);
+    const update = fullPriceUpdate(feedId, 100);
+    Buffer.alloc(8, 255).copy(update);
+
+    expect(() => decodeOraclePrice(update, feedId, 101)).toThrow(/not a recognized/);
+  });
 });

@@ -1,12 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useWallet } from "@solana/wallet-adapter-react";
+import { Connection } from "@solana/web3.js";
 import type { MarketSnapshot, SnapshotError } from "@/app/lib/domain";
 import {
   applyOracleStreamUpdate,
   feedHealthAt,
   subscribeOraclePrice,
 } from "@/app/lib/live/oracle-stream";
+import { readClientLiveConfig } from "@/app/lib/live/client-config";
+import { authorizeErAccess } from "@/app/lib/live/er-access";
 
 function oracleStreamKey(snapshot: MarketSnapshot): string | null {
   if (
@@ -19,6 +23,7 @@ function oracleStreamKey(snapshot: MarketSnapshot): string | null {
 }
 
 export function useGameSnapshot(walletAddress: string | null) {
+  const wallet = useWallet();
   const [snapshot, setSnapshot] = useState<MarketSnapshot | null>(null);
   const [snapshotError, setSnapshotError] = useState<string | null>(null);
   const [oracleError, setOracleError] = useState<{
@@ -100,36 +105,69 @@ export function useGameSnapshot(walletAddress: string | null) {
     }
 
     let active = true;
+    let unsubscribe: () => void = () => undefined;
     streamRef.current = null;
-    const unsubscribe = subscribeOraclePrice(
-      { erEndpoint, oracleAddress, oracleFeedId },
-      (update) => {
+    const connect = async () => {
+      try {
+        const config = readClientLiveConfig();
+        let streamEndpoint = erEndpoint;
+        let connection: Connection | undefined;
+        if (config.erStreamRpcEndpoint) {
+          if (!wallet.publicKey || !wallet.signMessage) {
+            throw new Error("Connect a message-signing wallet for real-time updates");
+          }
+          const access = await authorizeErAccess(
+            config.erStreamRpcEndpoint,
+            config.erStreamWsEndpoint,
+            wallet.publicKey,
+            wallet.signMessage,
+          );
+          streamEndpoint = access.rpcEndpoint;
+          connection = new Connection(access.rpcEndpoint, {
+            commitment: "confirmed",
+            wsEndpoint: access.wsEndpoint,
+          });
+        }
         if (!active) return;
-        streamRef.current = {
-          key: streamKey,
-          lastReceivedAt: update.receivedAt,
-          publishTime: update.publishTime,
-        };
-        setSnapshot((current) => {
-          if (!current || oracleStreamKey(current) !== streamKey) return current;
-          return applyOracleStreamUpdate(current, update);
-        });
-        setOracleError((current) => current?.key === streamKey ? null : current);
-      },
-      (cause) => {
+        unsubscribe = subscribeOraclePrice(
+          { erEndpoint: streamEndpoint, oracleAddress, oracleFeedId },
+          (update) => {
+            if (!active) return;
+            streamRef.current = {
+              key: streamKey,
+              lastReceivedAt: update.receivedAt,
+              publishTime: update.publishTime,
+            };
+            setSnapshot((current) => {
+              if (!current || oracleStreamKey(current) !== streamKey) return current;
+              return applyOracleStreamUpdate(current, update);
+            });
+            setOracleError((current) => current?.key === streamKey ? null : current);
+          },
+          (cause) => {
+            if (!active) return;
+            setOracleError({
+              key: streamKey,
+              message: cause instanceof Error ? cause.message : "Oracle websocket failed",
+            });
+          },
+          connection,
+        );
+      } catch (cause) {
         if (!active) return;
         setOracleError({
           key: streamKey,
           message: cause instanceof Error ? cause.message : "Oracle websocket failed",
         });
-      },
-    );
+      }
+    };
+    void connect();
 
     return () => {
       active = false;
       unsubscribe();
     };
-  }, [erEndpoint, oracleAddress, oracleFeedId, streamKey]);
+  }, [erEndpoint, oracleAddress, oracleFeedId, streamKey, wallet.publicKey, wallet.signMessage]);
 
   useEffect(() => {
     const interval = window.setInterval(() => {

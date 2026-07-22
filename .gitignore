@@ -6,6 +6,7 @@
 /node_modules
 /.next
 /coverage
+/magicblock-test-storage
 /.env.local
 .DS_Store
 *.tsbuildinfo

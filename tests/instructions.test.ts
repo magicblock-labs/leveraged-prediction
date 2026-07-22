@@ -47,22 +47,23 @@ describe("final ABI write builders", () => {
   });
 
   it("encodes open_position arguments and exact account count", () => {
-    const keys = Array.from({ length: 12 }, (_, index) => new PublicKey(Uint8Array.from({ length: 32 }, () => index + 1)));
+    const keys = Array.from({ length: 13 }, (_, index) => new PublicKey(Uint8Array.from({ length: 32 }, () => index + 1)));
     const instruction = openPositionInstruction(
       PROGRAM_ID,
       {
         user: keys[0],
-        protocolConfig: keys[1],
-        market: keys[2],
-        userPositions: keys[3],
-        poolTokenAccount: keys[4],
-        derivedFeeAuthority: keys[5],
-        feeTokenAccount: keys[6],
-        userTokenAccount: keys[7],
-        payoutEscrowTokenAccount: keys[8],
-        collateralMint: keys[9],
-        priceUpdate: keys[10],
-        hydraCrank: keys[11],
+        taskPayer: keys[1],
+        protocolConfig: keys[2],
+        market: keys[3],
+        userPositions: keys[4],
+        poolTokenAccount: keys[5],
+        derivedFeeAuthority: keys[6],
+        feeTokenAccount: keys[7],
+        userTokenAccount: keys[8],
+        payoutEscrowTokenAccount: keys[9],
+        collateralMint: keys[10],
+        priceUpdate: keys[11],
+        hydraCrank: keys[12],
       },
       {
         nonce: 17,
@@ -74,8 +75,9 @@ describe("final ABI write builders", () => {
       },
     );
 
-    expect(instruction.keys).toHaveLength(17);
-    expect(instruction.keys[0]).toMatchObject({ isSigner: true, isWritable: true });
+    expect(instruction.keys).toHaveLength(18);
+    expect(instruction.keys[0]).toMatchObject({ isSigner: true, isWritable: false });
+    expect(instruction.keys[1]).toMatchObject({ isSigner: true, isWritable: true });
     expect(instruction.data.subarray(0, 8)).toEqual(Buffer.from(instructionDiscriminators.openPosition));
     expect(instruction.data.readUInt32LE(8)).toBe(17);
     expect(instruction.data.subarray(12, 44)).toEqual(Buffer.alloc(32, 9));
@@ -97,6 +99,7 @@ describe("final ABI write builders", () => {
     const key = new PublicKey("11111111111111111111111111111112");
     expect(() => openPositionInstruction(PROGRAM_ID, {
       user: key,
+      taskPayer: key,
       protocolConfig: key,
       market: key,
       userPositions: key,

@@ -115,6 +115,7 @@ export function delegateUserPositionsInstruction(
 
 export interface OpenPositionAccounts {
   user: PublicKey;
+  taskPayer: PublicKey;
   protocolConfig: PublicKey;
   market: PublicKey;
   userPositions: PublicKey;
@@ -184,7 +185,8 @@ export function openPositionInstruction(
     programId,
     data: Buffer.from(data),
     keys: [
-      { pubkey: accounts.user, isSigner: true, isWritable: true },
+      { pubkey: accounts.user, isSigner: true, isWritable: false },
+      { pubkey: accounts.taskPayer, isSigner: true, isWritable: true },
       { pubkey: accounts.protocolConfig, isSigner: false, isWritable: false },
       { pubkey: accounts.market, isSigner: false, isWritable: true },
       { pubkey: accounts.userPositions, isSigner: false, isWritable: true },

@@ -195,8 +195,12 @@ pub mod leveraged_prediction {
         instructions::set_market_mode::handler(ctx, mode)
     }
 
-    pub fn delegate_market(ctx: Context<DelegateMarket>, market_id: u16) -> Result<()> {
-        instructions::delegate_market::handler(ctx, market_id)
+    pub fn delegate_market(
+        ctx: Context<DelegateMarket>,
+        market_id: u16,
+        validator: Pubkey,
+    ) -> Result<()> {
+        instructions::delegate_market::handler(ctx, market_id, validator)
     }
 
     pub fn initialize_user_positions(ctx: Context<InitializeUserPositions>) -> Result<()> {
@@ -214,8 +218,11 @@ pub mod leveraged_prediction {
         instructions::delegate_user_positions::handler(ctx, validator)
     }
 
-    pub fn delegate_user_liquidity(ctx: Context<DelegateUserLiquidity>) -> Result<()> {
-        instructions::delegate_user_liquidity::handler(ctx)
+    pub fn delegate_user_liquidity(
+        ctx: Context<DelegateUserLiquidity>,
+        validator: Pubkey,
+    ) -> Result<()> {
+        instructions::delegate_user_liquidity::handler(ctx, validator)
     }
 
     pub fn undelegate_user_liquidity(ctx: Context<UndelegateUserLiquidity>) -> Result<()> {

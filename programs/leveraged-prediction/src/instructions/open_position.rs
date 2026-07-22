@@ -134,7 +134,7 @@ pub fn handler(
         CpiContext::new(
             ctx.accounts.system_program.key(),
             LamportsTransfer {
-                from: ctx.accounts.user.to_account_info(),
+                from: ctx.accounts.task_payer.to_account_info(),
                 to: market_info.clone(),
             },
         ),
@@ -225,8 +225,9 @@ fn settle_position_schedule_metas(
 #[derive(Accounts)]
 #[instruction(nonce: u32, task_salt: [u8; 32])]
 pub struct OpenPosition<'info> {
-    #[account(mut)]
     pub user: Signer<'info>,
+    #[account(mut)]
+    pub task_payer: Signer<'info>,
     #[account(seeds = [CONFIG_SEED], bump = protocol_config.bump, has_one = collateral_mint)]
     pub protocol_config: Box<Account<'info, ProtocolConfig>>,
     #[account(mut, seeds = [MARKET_SEED, &market.market_id.to_le_bytes()], bump = market.bump)]
