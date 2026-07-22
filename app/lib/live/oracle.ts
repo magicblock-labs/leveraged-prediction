@@ -5,6 +5,7 @@ import { ORACLE_PROGRAM_ID } from "@/app/lib/live/config";
 
 export const ORACLE_EXPONENT = 8;
 export const ORACLE_MAX_AGE_SECONDS = 2;
+const ORACLE_MAX_FUTURE_SKEW_SECONDS = 1;
 const ORACLE_MAX_CONFIDENCE_BPS = 1;
 const PRICE_SCALE = 10 ** ORACLE_EXPONENT;
 const PYTH_PRICE_UPDATE_DISCRIMINATOR = accountDiscriminator("PriceUpdateV2");
@@ -117,7 +118,8 @@ export function decodeOraclePrice(
   const confidence = BigInt(message.conf.toString());
   const publishTime = Number(message.publishTime.toString());
   const postedSlot = BigInt(update.postedSlot.toString());
-  const ageSeconds = nowSeconds - publishTime;
+  const measuredAgeSeconds = nowSeconds - publishTime;
+  const ageSeconds = Math.max(0, measuredAgeSeconds);
 
   if (!bytesEqual(asBytes(message.feedId), expectedFeedId)) {
     throw new Error("Oracle feed ID does not match the configured Market");
@@ -130,8 +132,12 @@ export function decodeOraclePrice(
   if (!fullyVerified || postedSlot === 0n) {
     throw new Error("Oracle update is not fully verified and posted");
   }
-  if (rawPrice <= 0n || ageSeconds < 0 || ageSeconds > ORACLE_MAX_AGE_SECONDS) {
-    throw new Error(`Oracle update is stale or invalid (${ageSeconds.toFixed(1)}s old)`);
+  if (
+    rawPrice <= 0n ||
+    measuredAgeSeconds < -ORACLE_MAX_FUTURE_SKEW_SECONDS ||
+    ageSeconds > ORACLE_MAX_AGE_SECONDS
+  ) {
+    throw new Error(`Oracle update is stale or invalid (${measuredAgeSeconds.toFixed(1)}s old)`);
   }
   if (confidence * 10_000n > rawPrice * BigInt(ORACLE_MAX_CONFIDENCE_BPS)) {
     throw new Error("Oracle confidence interval exceeds the market limit");

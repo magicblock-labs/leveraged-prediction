@@ -37,6 +37,16 @@ describe("MagicBlock PriceUpdateV2 view", () => {
     expect(() => decodeOraclePrice(update, feedId, 103)).toThrow(/stale or invalid/);
   });
 
+  it("tolerates one second of publisher clock skew but rejects more", () => {
+    const feedId = Buffer.alloc(32, 7);
+    const update = fullPriceUpdate(feedId, 101);
+
+    expect(decodeOraclePrice(update, feedId, 100).ageSeconds).toBe(0);
+    expect(() => decodeOraclePrice(fullPriceUpdate(feedId, 102), feedId, 100)).toThrow(
+      /stale or invalid/,
+    );
+  });
+
   it("accepts the MagicBlock ephemeral oracle discriminator", () => {
     const feedId = Buffer.alloc(32, 7);
     const update = fullPriceUpdate(feedId, 100);
