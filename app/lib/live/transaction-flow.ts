@@ -1,3 +1,4 @@
+import "@/app/polyfills";
 import {
   BN,
   type Wallet as AnchorWallet,
@@ -8,7 +9,6 @@ import {
   createDelegateInstruction,
   decodeEphemeralAta,
   delegateEphemeralAtaIx,
-  depositSplTokensIx,
   deriveEphemeralAta,
   deriveShuttleAta,
   deriveShuttleEphemeralAta,
@@ -16,7 +16,6 @@ import {
   deriveVault,
   deriveVaultAta,
   initEphemeralAtaIx,
-  setupAndDelegateShuttleEphemeralAtaWithMergeIx,
 } from "@magicblock-labs/ephemeral-rollups-sdk";
 import {
   GPLSESSION_PROGRAMS,
@@ -69,14 +68,20 @@ import {
   protocolConfigPda,
   userPositionsPda,
 } from "@/app/lib/live/pdas";
+import {
+  browserSafeDepositSplTokensIx,
+  browserSafeSetupAndDelegateShuttleIx,
+} from "@/app/lib/live/espl-instructions";
 import { decodeOraclePrice } from "@/app/lib/live/oracle";
 import {
   getDelegationStatus,
   normalizeErEndpoint,
+  type DelegationStatus,
 } from "@/app/lib/live/router";
 import { ORACLE_PROGRAM_ID } from "@/app/lib/live/config";
 import {
   SESSION_DURATION_SECONDS,
+  sessionFeePayer,
   sessionKeypair,
   type StoredGameSession,
 } from "@/app/lib/live/session-store";
@@ -92,7 +97,6 @@ const CONFIRMATION_POLL_MS = 500;
 const MAX_WALLET_COMPUTE_UNIT_LIMIT = 1_400_000;
 const MAX_WALLET_COMPUTE_UNIT_PRICE_MICRO_LAMPORTS = 1_000_000n;
 const ER_FEE_PAYER_LAMPORTS = 10_000_000;
-const feePayerSessions = new Map<string, Keypair>();
 const SESSION_TOKEN_PROGRAM_ID = GPLSESSION_PROGRAMS.devnet;
 
 export type TransactionPhase =
@@ -118,9 +122,15 @@ export interface SessionProgress {
     | "creating"
     | "preparing-accounts"
     | "depositing"
+    | "preparing-fee-payer"
     | "approving"
     | "ready";
   message: string;
+}
+
+export interface CreateGameSessionOptions {
+  existingSession?: StoredGameSession | null;
+  onSessionAvailable?(session: StoredGameSession): void;
 }
 
 export async function claimFallbackPayoutFlow(
@@ -136,10 +146,32 @@ export async function claimFallbackPayoutFlow(
     context.userPositions,
     true,
   );
-  await assertRouteSet(context, [
+  const [userEphemeralTokenAccount] = deriveEphemeralAta(
+    context.user,
+    context.collateralMint,
+  );
+  const [payoutEphemeralTokenAccount] = deriveEphemeralAta(
     context.userPositions,
-    userTokenAccount,
-    payoutEscrowTokenAccount,
+    context.collateralMint,
+  );
+  await Promise.all([
+    waitForRoute(
+      context.routerEndpoint,
+      context.userPositions,
+      context.erEndpoint,
+    ),
+    waitForTokenRoute(
+      context.routerEndpoint,
+      userEphemeralTokenAccount,
+      userTokenAccount,
+      context.erEndpoint,
+    ),
+    waitForTokenRoute(
+      context.routerEndpoint,
+      payoutEphemeralTokenAccount,
+      payoutEscrowTokenAccount,
+      context.erEndpoint,
+    ),
   ]);
   const payout = await getAccount(context.erConnection, payoutEscrowTokenAccount, "confirmed");
   if (payout.amount === 0n) return null;
@@ -772,6 +804,51 @@ function assertSessionTokenAccount(
   }
 }
 
+function assertStoredSessionIdentity(
+  user: PublicKey,
+  programId: PublicKey,
+  session: StoredGameSession,
+): PublicKey {
+  if (
+    session.user !== user.toBase58() ||
+    session.programId !== programId.toBase58()
+  ) {
+    throw new Error("Stored session does not belong to this wallet and program");
+  }
+  const signer = sessionKeypair(session).publicKey;
+  const expectedToken = sessionTokenPda(
+    programId,
+    signer,
+    user,
+  );
+  if (!expectedToken.equals(new PublicKey(session.sessionToken))) {
+    throw new Error("Stored session token address is invalid");
+  }
+  return expectedToken;
+}
+
+async function validateSessionTokenInContext(
+  connection: Connection,
+  user: PublicKey,
+  programId: PublicKey,
+  session: StoredGameSession,
+): Promise<void> {
+  const expectedToken = assertStoredSessionIdentity(user, programId, session);
+  const tokenInfo = await connection.getAccountInfo(
+    expectedToken,
+    "confirmed",
+  );
+  if (!tokenInfo || !tokenInfo.owner.equals(SESSION_TOKEN_PROGRAM_ID)) {
+    throw new Error("Session token is missing from the base layer");
+  }
+  assertSessionTokenAccount(
+    Buffer.from(tokenInfo.data),
+    session,
+    user,
+    programId,
+  );
+}
+
 function anchorBuildWallet(user: PublicKey): AnchorWallet {
   return {
     publicKey: user,
@@ -862,44 +939,55 @@ async function ensureErFeePayer(
   signTransaction: SignTransaction,
   onStatus: (message: string) => void,
   onSubmitted?: (signature: string) => void,
+  storedFeePayer?: Keypair,
 ): Promise<Keypair> {
-  const key = `${context.user.toBase58()}:${context.validator.toBase58()}`;
-  const existing = feePayerSessions.get(key);
-  if (existing) {
-    const info = await context.baseConnection.getAccountInfo(existing.publicKey, "confirmed");
+  const feePayer = storedFeePayer ?? Keypair.generate();
+  const info = await context.baseConnection.getAccountInfo(feePayer.publicKey, "confirmed");
+  if (info) {
     if (info?.owner.equals(DELEGATION_PROGRAM_ID)) {
-      await waitForRoute(context.routerEndpoint, existing.publicKey, context.erEndpoint);
-      return existing;
+      await waitForRoute(context.routerEndpoint, feePayer.publicKey, context.erEndpoint);
+      return feePayer;
     }
-    feePayerSessions.delete(key);
+    if (!info.owner.equals(SystemProgram.programId)) {
+      throw new Error("Stored session fee payer has an unexpected base-layer owner");
+    }
   }
 
   onStatus("Preparing a fast fee account for this arena…");
-  const feePayer = Keypair.generate();
+  const fundingShortfall = Math.max(
+    0,
+    ER_FEE_PAYER_LAMPORTS - (info?.lamports ?? 0),
+  );
+  const instructions: TransactionInstruction[] = [];
+  if (fundingShortfall > 0) {
+    instructions.push(
+      SystemProgram.transfer({
+        fromPubkey: context.user,
+        toPubkey: feePayer.publicKey,
+        lamports: fundingShortfall,
+      }),
+    );
+  }
+  instructions.push(
+    SystemProgram.assign({
+      accountPubkey: feePayer.publicKey,
+      programId: DELEGATION_PROGRAM_ID,
+    }),
+    createDelegateInstruction(
+      {
+        payer: context.user,
+        delegatedAccount: feePayer.publicKey,
+        ownerProgram: SystemProgram.programId,
+        validator: context.validator,
+      },
+      { validator: context.validator },
+    ),
+  );
   await sendAndConfirm(
     context.baseConnection,
     context.user,
     signTransaction,
-    [
-      SystemProgram.transfer({
-        fromPubkey: context.user,
-        toPubkey: feePayer.publicKey,
-        lamports: ER_FEE_PAYER_LAMPORTS,
-      }),
-      SystemProgram.assign({
-        accountPubkey: feePayer.publicKey,
-        programId: DELEGATION_PROGRAM_ID,
-      }),
-      createDelegateInstruction(
-        {
-          payer: context.user,
-          delegatedAccount: feePayer.publicKey,
-          ownerProgram: SystemProgram.programId,
-          validator: context.validator,
-        },
-        { validator: context.validator },
-      ),
-    ],
+    instructions,
     onSubmitted,
     {
       additionalSigners: [feePayer],
@@ -907,7 +995,26 @@ async function ensureErFeePayer(
     },
   );
   await waitForRoute(context.routerEndpoint, feePayer.publicKey, context.erEndpoint);
-  feePayerSessions.set(key, feePayer);
+  return feePayer;
+}
+
+async function validateSessionFeePayerInContext(
+  context: LiveWriteContext,
+  session: StoredGameSession,
+): Promise<Keypair> {
+  const feePayer = sessionFeePayer(session);
+  const info = await context.baseConnection.getAccountInfo(
+    feePayer.publicKey,
+    "confirmed",
+  );
+  if (!info?.owner.equals(DELEGATION_PROGRAM_ID)) {
+    throw new Error("Session fee payer is not delegated");
+  }
+  await waitForRoute(
+    context.routerEndpoint,
+    feePayer.publicKey,
+    context.erEndpoint,
+  );
   return feePayer;
 }
 
@@ -916,24 +1023,78 @@ async function waitForRoute(
   account: PublicKey,
   expectedEndpoint: string,
 ): Promise<void> {
+  return waitForRouteCandidates(
+    routerEndpoint,
+    [account],
+    expectedEndpoint,
+  );
+}
+
+async function waitForTokenRoute(
+  routerEndpoint: string,
+  ephemeralTokenAccount: PublicKey,
+  tokenAccount: PublicKey,
+  expectedEndpoint: string,
+): Promise<void> {
+  return waitForRouteCandidates(
+    routerEndpoint,
+    [ephemeralTokenAccount, tokenAccount],
+    expectedEndpoint,
+  );
+}
+
+async function waitForRouteCandidates(
+  routerEndpoint: string,
+  accounts: PublicKey[],
+  expectedEndpoint: string,
+): Promise<void> {
   const deadline = Date.now() + ROUTE_TIMEOUT_MS;
   let lastError = "delegation has not reached the router";
   while (Date.now() < deadline) {
     try {
-      const route = await getDelegationStatus(routerEndpoint, account.toBase58());
-      if (route.isDelegated && route.fqdn) {
-        const actual = normalizeErEndpoint(route.fqdn);
-        if (actual !== expectedEndpoint) {
-          throw new Error(`${account.toBase58()} is routed to ${actual}, expected ${expectedEndpoint}`);
+      const routes = await Promise.all(
+        accounts.map((account) =>
+          getDelegationStatus(routerEndpoint, account.toBase58()),
+        ),
+      );
+      for (const route of routes) {
+        if (route.isDelegated && route.fqdn) {
+          const actual = normalizeErEndpoint(route.fqdn);
+          if (actual === expectedEndpoint) return;
+          lastError = `account is routed to ${actual}, expected ${expectedEndpoint}`;
         }
-        return;
       }
     } catch (cause) {
       lastError = cause instanceof Error ? cause.message : lastError;
     }
     await sleep(300);
   }
-  throw new Error(`Timed out waiting for ${account.toBase58()}: ${lastError}`);
+  throw new Error(
+    `Timed out waiting for ${accounts.map((account) => account.toBase58()).join(" or ")}: ${lastError}`,
+  );
+}
+
+async function getTokenRoute(
+  routerEndpoint: string,
+  ephemeralTokenAccount: PublicKey,
+  tokenAccount: PublicKey,
+): Promise<DelegationStatus | null> {
+  const routes = await Promise.all(
+    [ephemeralTokenAccount, tokenAccount].map((account) =>
+      getDelegationStatus(routerEndpoint, account.toBase58()).catch(() => null),
+    ),
+  );
+  const delegated = routes.filter(
+    (route): route is DelegationStatus & { fqdn: string } =>
+      Boolean(route?.isDelegated && route.fqdn),
+  );
+  const endpoints = new Set(
+    delegated.map((route) => normalizeErEndpoint(route.fqdn)),
+  );
+  if (endpoints.size > 1) {
+    throw new Error("Ephemeral token route representations disagree");
+  }
+  return delegated[0] ?? null;
 }
 
 async function waitForTokenAmount(
@@ -1002,22 +1163,26 @@ export async function validateGameSession(
   session: StoredGameSession,
 ): Promise<{ remainingAllowanceMinor: bigint }> {
   const context = await loadWriteContext(user);
-  if (session.user !== user.toBase58() || session.programId !== context.programId.toBase58()) {
-    throw new Error("Stored session does not belong to this wallet and program");
-  }
+  await validateSessionTokenInContext(
+    context.baseConnection,
+    user,
+    context.programId,
+    session,
+  );
+  await validateSessionFeePayerInContext(context, session);
   const signer = sessionKeypair(session).publicKey;
-  const expectedToken = sessionTokenPda(context.programId, signer, user);
-  if (!expectedToken.equals(new PublicKey(session.sessionToken))) {
-    throw new Error("Stored session token address is invalid");
-  }
-  const tokenInfo = await context.baseConnection.getAccountInfo(expectedToken, "confirmed");
-  if (!tokenInfo || !tokenInfo.owner.equals(SESSION_TOKEN_PROGRAM_ID)) {
-    throw new Error("Session token is missing from the base layer");
-  }
-  assertSessionTokenAccount(Buffer.from(tokenInfo.data), session, user, context.programId);
 
   const userTokenAccount = getAssociatedTokenAddressSync(context.collateralMint, user);
-  await waitForRoute(context.routerEndpoint, userTokenAccount, context.erEndpoint);
+  const [userEphemeralTokenAccount] = deriveEphemeralAta(
+    user,
+    context.collateralMint,
+  );
+  await waitForTokenRoute(
+    context.routerEndpoint,
+    userEphemeralTokenAccount,
+    userTokenAccount,
+    context.erEndpoint,
+  );
   const token = await getAccount(context.erConnection, userTokenAccount, "confirmed");
   if (
     !token.owner.equals(user) ||
@@ -1030,48 +1195,114 @@ export async function validateGameSession(
   return { remainingAllowanceMinor: token.delegatedAmount };
 }
 
+export async function validateGameSessionToken(
+  user: PublicKey,
+  session: StoredGameSession,
+): Promise<void> {
+  const config = readClientLiveConfig();
+  await validateSessionTokenInContext(
+    new Connection(config.baseRpcEndpoint, "confirmed"),
+    user,
+    config.programId,
+    session,
+  );
+}
+
 export async function createGameSessionFlow(
   user: PublicKey,
   allowanceUsd: number,
   signTransaction: SignTransaction,
   onProgress: (progress: SessionProgress) => void,
+  options: CreateGameSessionOptions = {},
 ): Promise<StoredGameSession> {
   if (!Number.isFinite(allowanceUsd) || allowanceUsd < 1 || allowanceUsd > 1_000) {
     throw new Error("Session spending limit must be between 1 and 1,000 USDC");
   }
   const allowanceMinor = BigInt(Math.round(allowanceUsd * 1_000_000));
   const context = await loadWriteContext(user);
-  const signer = Keypair.generate();
-  const chainSlot = await context.baseConnection.getSlot("confirmed");
-  const chainTime = await context.baseConnection.getBlockTime(chainSlot);
-  const validUntil = (chainTime ?? Math.floor(Date.now() / 1_000)) + SESSION_DURATION_SECONDS;
-  const sessionToken = sessionTokenPda(context.programId, signer.publicKey, user);
-  const manager = new SessionTokenManager(
-    anchorBuildWallet(user),
-    context.baseConnection,
-  );
+  let session: StoredGameSession;
+  if (options.existingSession) {
+    await validateSessionTokenInContext(
+      context.baseConnection,
+      user,
+      context.programId,
+      options.existingSession,
+    );
+    if (
+      options.existingSession.setupComplete &&
+      options.existingSession.allowanceMinor === allowanceMinor.toString()
+    ) {
+      await validateGameSession(user, options.existingSession);
+      options.onSessionAvailable?.(options.existingSession);
+      onProgress({
+        phase: "ready",
+        message: "Existing session is ready · no setup transaction needed",
+      });
+      return options.existingSession;
+    }
+    session = {
+      ...options.existingSession,
+      erFeePayerSecret:
+        options.existingSession.erFeePayerSecret.length === 64
+          ? options.existingSession.erFeePayerSecret
+          : Array.from(Keypair.generate().secretKey),
+      allowanceMinor: allowanceMinor.toString(),
+      setupComplete: false,
+    };
+    options.onSessionAvailable?.(session);
+    onProgress({
+      phase: "preparing-accounts",
+      message: "Session found. Continuing the remaining setup…",
+    });
+  } else {
+    const signer = Keypair.generate();
+    const feePayer = Keypair.generate();
+    const chainSlot = await context.baseConnection.getSlot("confirmed");
+    const chainTime = await context.baseConnection.getBlockTime(chainSlot);
+    const validUntil = (chainTime ?? Math.floor(Date.now() / 1_000)) + SESSION_DURATION_SECONDS;
+    const sessionToken = sessionTokenPda(context.programId, signer.publicKey, user);
+    const manager = new SessionTokenManager(
+      anchorBuildWallet(user),
+      context.baseConnection,
+    );
 
-  onProgress({ phase: "creating", message: "Creating your one-hour play session…" });
-  const createTransaction = await manager.program.methods
-    .createSessionV2(false, new BN(validUntil), new BN(0))
-    .accounts({
-      targetProgram: context.programId,
-      sessionSigner: signer.publicKey,
-      feePayer: user,
-      authority: user,
-    })
-    .transaction();
-  await sendAndConfirm(
-    context.baseConnection,
-    user,
-    signTransaction,
-    createTransaction.instructions,
-    undefined,
-    {
-      additionalSigners: [signer],
-      label: "session:create-token",
-    },
-  );
+    onProgress({ phase: "creating", message: "Creating your one-hour play session…" });
+    const createTransaction = await manager.program.methods
+      .createSessionV2(false, new BN(validUntil), new BN(0))
+      .accounts({
+        targetProgram: context.programId,
+        sessionSigner: signer.publicKey,
+        feePayer: user,
+        authority: user,
+      })
+      .transaction();
+    await sendAndConfirm(
+      context.baseConnection,
+      user,
+      signTransaction,
+      createTransaction.instructions,
+      undefined,
+      {
+        additionalSigners: [signer],
+        label: "session:create-token",
+      },
+    );
+    session = {
+      user: user.toBase58(),
+      programId: context.programId.toBase58(),
+      sessionToken: sessionToken.toBase58(),
+      sessionSignerSecret: Array.from(signer.secretKey),
+      erFeePayerSecret: Array.from(feePayer.secretKey),
+      allowanceMinor: allowanceMinor.toString(),
+      validUntil,
+      setupComplete: false,
+    };
+    options.onSessionAvailable?.(session);
+    onProgress({
+      phase: "preparing-accounts",
+      message: "Session created. Preparing your play accounts…",
+    });
+  }
 
   const callbacks: OnboardingCallbacks = {
     status: (phase, message) => {
@@ -1093,7 +1324,9 @@ export async function createGameSessionFlow(
   const feePayer = await ensureErFeePayer(
     context,
     signTransaction,
-    (message) => onProgress({ phase: "preparing-accounts", message }),
+    (message) => onProgress({ phase: "preparing-fee-payer", message }),
+    undefined,
+    sessionFeePayer(session),
   );
   onProgress({
     phase: "approving",
@@ -1107,7 +1340,7 @@ export async function createGameSessionFlow(
       createApproveCheckedInstruction(
         collateral.ata,
         context.collateralMint,
-        signer.publicKey,
+        sessionKeypair(session).publicKey,
         user,
         allowanceMinor,
         6,
@@ -1121,17 +1354,11 @@ export async function createGameSessionFlow(
     },
   );
 
-  const session: StoredGameSession = {
-    user: user.toBase58(),
-    programId: context.programId.toBase58(),
-    sessionToken: sessionToken.toBase58(),
-    sessionSignerSecret: Array.from(signer.secretKey),
-    allowanceMinor: allowanceMinor.toString(),
-    validUntil,
-  };
-  await validateGameSession(user, session);
+  const readySession = { ...session, setupComplete: true };
+  await validateGameSession(user, readySession);
+  options.onSessionAvailable?.(readySession);
   onProgress({ phase: "ready", message: "Session ready · plays no longer need wallet prompts" });
-  return session;
+  return readySession;
 }
 
 function updateIntent(
@@ -1236,7 +1463,12 @@ async function ensureFallbackBalance(
       { label: "setup:fallback-payout" },
     );
   }
-  await waitForRoute(context.routerEndpoint, ata, context.erEndpoint);
+  await waitForTokenRoute(
+    context.routerEndpoint,
+    eata,
+    ata,
+    context.erEndpoint,
+  );
   await waitForTokenAmount(context.erConnection, ata, 0n);
   const account = await getAccount(context.erConnection, ata, "confirmed");
   if (!account.owner.equals(context.userPositions) || !account.mint.equals(context.collateralMint)) {
@@ -1253,7 +1485,11 @@ async function ensureCollateralBalance(
 ): Promise<{ eata: PublicKey; ata: PublicKey }> {
   const [eata] = deriveEphemeralAta(context.user, context.collateralMint);
   const ata = getAssociatedTokenAddressSync(context.collateralMint, context.user);
-  const routed = await getDelegationStatus(context.routerEndpoint, ata.toBase58()).catch(() => null);
+  const routed = await getTokenRoute(
+    context.routerEndpoint,
+    eata,
+    ata,
+  );
   const isDelegated = Boolean(routed?.isDelegated && routed.fqdn);
   let erAmount = 0n;
   if (isDelegated) {
@@ -1285,7 +1521,7 @@ async function ensureCollateralBalance(
     const [shuttleAta] = deriveShuttleAta(shuttleEata, context.collateralMint);
     const shuttleWalletAta = deriveShuttleWalletAta(context.collateralMint, shuttleEata);
     instructions = [
-      setupAndDelegateShuttleEphemeralAtaWithMergeIx(
+      browserSafeSetupAndDelegateShuttleIx(
         context.user,
         shuttleEata,
         shuttleAta,
@@ -1323,7 +1559,15 @@ async function ensureCollateralBalance(
       }
     }
     instructions.push(
-      depositSplTokensIx(eata, vault, context.collateralMint, ata, vaultAta, context.user, shortfall),
+      browserSafeDepositSplTokensIx(
+        eata,
+        vault,
+        context.collateralMint,
+        ata,
+        vaultAta,
+        context.user,
+        shortfall,
+      ),
       delegateEphemeralAtaIx(context.user, eata, context.validator),
     );
   }
@@ -1336,7 +1580,12 @@ async function ensureCollateralBalance(
     callbacks.submitted,
     { label: "setup:collateral" },
   );
-  await waitForRoute(context.routerEndpoint, ata, context.erEndpoint);
+  await waitForTokenRoute(
+    context.routerEndpoint,
+    eata,
+    ata,
+    context.erEndpoint,
+  );
   await waitForTokenAmount(context.erConnection, ata, amount);
   return { eata, ata };
 }
@@ -1441,7 +1690,6 @@ export async function openPositionFlow(
   direction: Direction,
   amountUsd: number,
   session: StoredGameSession,
-  signTransaction: SignTransaction,
   onProgress: ProgressHandler,
 ): Promise<OpenFlowResult> {
   if (!Number.isFinite(amountUsd) || amountUsd < 1 || amountUsd > 1_000) {
@@ -1452,6 +1700,7 @@ export async function openPositionFlow(
   const sessionSigner = sessionKeypair(session);
   if (
     session.user !== user.toBase58() ||
+    !session.setupComplete ||
     session.validUntil <= Math.floor(Date.now() / 1_000)
   ) {
     throw new Error("A valid session is required before playing");
@@ -1481,47 +1730,71 @@ export async function openPositionFlow(
   }
 
   try {
-    const onboarding: OnboardingCallbacks = {
-      status: (phase, message) => report(onProgress, intent, phase, message),
-      submitted: (signature) => {
-        intent = updateIntent(intent, {
-          status: "onboarding",
-          baseSignatures: [...intent.baseSignatures, signature],
-        });
-      },
+    const [collateralEata] = deriveEphemeralAta(
+      context.user,
+      context.collateralMint,
+    );
+    const collateralBalance = {
+      eata: collateralEata,
+      ata: getAssociatedTokenAddressSync(
+        context.collateralMint,
+        context.user,
+      ),
     };
-    await ensureUserPositions(context, signTransaction, onboarding);
-    const fallback = await ensureFallbackBalance(context, signTransaction, onboarding);
-    const collateralBalance = await ensureCollateralBalance(
-      context,
-      collateral,
-      signTransaction,
-      onboarding,
+    const [fallbackEata] = deriveEphemeralAta(
+      context.userPositions,
+      context.collateralMint,
     );
-    report(onProgress, intent, "preparing-fee-payer", "Preparing a fast fee account for this arena…");
-    const feePayer = await ensureErFeePayer(
-      context,
-      signTransaction,
-      () => undefined,
-      (signature) => {
-        intent = updateIntent(intent, {
-          status: "onboarding",
-          baseSignatures: [...intent.baseSignatures, signature],
-        });
-      },
-    );
+    const fallback = {
+      eata: fallbackEata,
+      ata: getAssociatedTokenAddressSync(
+        context.collateralMint,
+        context.userPositions,
+        true,
+      ),
+    };
+    const feePayer = await validateSessionFeePayerInContext(context, session);
 
     report(onProgress, intent, "verifying-route", "Verifying every play account is in the same arena…");
     const poolTokenAccount = getAssociatedTokenAddressSync(context.collateralMint, context.market, true);
     const feeTokenAccount = getAssociatedTokenAddressSync(context.collateralMint, context.feeAuthority, true);
-    await assertRouteSet(context, [
+    const [poolEphemeralTokenAccount] = deriveEphemeralAta(
       context.market,
-      context.userPositions,
-      collateralBalance.ata,
-      fallback.ata,
-      poolTokenAccount,
-      feeTokenAccount,
-      context.oracle,
+      context.collateralMint,
+    );
+    const [feeEphemeralTokenAccount] = deriveEphemeralAta(
+      context.feeAuthority,
+      context.collateralMint,
+    );
+    await Promise.all([
+      assertRouteSet(context, [
+        context.market,
+        context.userPositions,
+      ]),
+      waitForTokenRoute(
+        context.routerEndpoint,
+        collateralBalance.eata,
+        collateralBalance.ata,
+        context.erEndpoint,
+      ),
+      waitForTokenRoute(
+        context.routerEndpoint,
+        fallback.eata,
+        fallback.ata,
+        context.erEndpoint,
+      ),
+      waitForTokenRoute(
+        context.routerEndpoint,
+        poolEphemeralTokenAccount,
+        poolTokenAccount,
+        context.erEndpoint,
+      ),
+      waitForTokenRoute(
+        context.routerEndpoint,
+        feeEphemeralTokenAccount,
+        feeTokenAccount,
+        context.erEndpoint,
+      ),
     ]);
 
     const marketInfo = await context.erConnection.getAccountInfo(context.market, "confirmed");
@@ -1533,6 +1806,8 @@ export async function openPositionFlow(
     if (!positionsInfo || decodeUserPositions(Buffer.from(positionsInfo.data)).length >= 8) {
       throw new Error("Your eight play slots are full");
     }
+    // Pricing feeds are shared, unpinned clones. Validate the feed on the Market ER
+    // instead of asking the router to resolve its sentinel validator as one region.
     const oracleInfo = await context.erConnection.getAccountInfo(context.oracle, "confirmed");
     if (!oracleInfo || !oracleInfo.owner.equals(ORACLE_PROGRAM_ID)) {
       throw new Error("The configured oracle is unavailable on the ER");

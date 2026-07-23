@@ -74,10 +74,6 @@ export function usePlayTransaction(
       setVisible(true);
       return;
     }
-    if (!wallet.signTransaction) {
-      setError("This wallet must support transaction signing to play");
-      return;
-    }
     if (!session) {
       setError("Start a play session before choosing Up or Down");
       return;
@@ -89,7 +85,6 @@ export function usePlayTransaction(
         direction,
         amount,
         session,
-        wallet.signTransaction,
         (next) => {
           setProgress(next);
           setIntent(next.intent);
@@ -104,7 +99,7 @@ export function usePlayTransaction(
       const stored = loadOpenIntent(wallet.publicKey.toBase58(), config.marketId);
       setIntent(stored && requiresIntentRecovery(stored) ? stored : null);
     }
-  }, [refresh, refreshSession, session, setVisible, snapshot?.mode, wallet.publicKey, wallet.signTransaction]);
+  }, [refresh, refreshSession, session, setVisible, snapshot?.mode, wallet.publicKey]);
 
   const recover = useCallback(async () => {
     if (!wallet.publicKey || !intent) return;

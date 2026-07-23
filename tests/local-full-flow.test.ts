@@ -462,9 +462,11 @@ suite("local wallet-to-settlement flow", () => {
       return response?.ok ?? false;
     });
 
+    let walletSignCount = 0;
     const walletSign = async <T extends Transaction | VersionedTransaction>(
       transaction: T,
     ): Promise<T> => {
+      walletSignCount += 1;
       if (transaction instanceof Transaction) {
         transaction.partialSign(admin);
       } else {
@@ -480,12 +482,32 @@ suite("local wallet-to-settlement flow", () => {
       wsEndpoint: publicAccess.wsEndpoint,
     });
     const sessionProgress: SessionProgress[] = [];
+    const availableSessions: StoredGameSession[] = [];
     gameSession = await createGameSessionFlow(
       admin.publicKey,
       2,
       walletSign,
       (update) => sessionProgress.push(update),
+      {
+        onSessionAvailable: (available) => availableSessions.push(available),
+      },
     );
+    expect(availableSessions.map((session) => session.setupComplete)).toEqual([false, true]);
+
+    const resumedProgress: SessionProgress[] = [];
+    const originalSessionToken = gameSession.sessionToken;
+    gameSession = await createGameSessionFlow(
+      admin.publicKey,
+      2,
+      walletSign,
+      (update) => resumedProgress.push(update),
+      { existingSession: gameSession },
+    );
+    expect(gameSession.sessionToken).toBe(originalSessionToken);
+    expect(resumedProgress.some((update) => update.phase === "creating")).toBe(false);
+    expect(resumedProgress).toHaveLength(1);
+    expect(resumedProgress.at(-1)?.phase).toBe("ready");
+    const walletSignCountBeforePlay = walletSignCount;
     const progress: TransactionProgress[] = [];
     const play = async (direction: "up" | "down", entryPrice: number, settlementPrice: number) => {
       signatures.er.push(await sendTransaction(erConnection, new Transaction().add(
@@ -515,7 +537,6 @@ suite("local wallet-to-settlement flow", () => {
           direction,
           PLAY_USD,
           gameSession,
-          walletSign,
           (update) => progress.push(update),
         );
       } finally {
@@ -533,6 +554,7 @@ suite("local wallet-to-settlement flow", () => {
         }, null, 2));
       }
       expect(result.accepted, result.intent.message).toBe(true);
+      expect(walletSignCount).toBe(walletSignCountBeforePlay);
       expect(result.intent.erSignature).toBeTruthy();
       signatures.er.push(result.intent.erSignature!);
       const opened = await positions(erConnection, userPositions);

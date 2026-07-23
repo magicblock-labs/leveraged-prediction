@@ -8,8 +8,10 @@ export interface StoredGameSession {
   programId: string;
   sessionToken: string;
   sessionSignerSecret: number[];
+  erFeePayerSecret: number[];
   allowanceMinor: string;
   validUntil: number;
+  setupComplete: boolean;
 }
 
 function storageKey(user: string, programId: string): string {
@@ -17,15 +19,29 @@ function storageKey(user: string, programId: string): string {
 }
 
 export function sessionKeypair(session: StoredGameSession): Keypair {
+  return keypairFromStoredSecret(
+    session.sessionSignerSecret,
+    "Stored session signer is invalid",
+  );
+}
+
+export function sessionFeePayer(session: StoredGameSession): Keypair {
+  return keypairFromStoredSecret(
+    session.erFeePayerSecret,
+    "Stored session fee payer is invalid",
+  );
+}
+
+function keypairFromStoredSecret(secret: number[], errorMessage: string): Keypair {
   if (
-    session.sessionSignerSecret.length !== 64 ||
-    !session.sessionSignerSecret.every(
+    secret.length !== 64 ||
+    !secret.every(
       (value) => Number.isInteger(value) && value >= 0 && value <= 255,
     )
   ) {
-    throw new Error("Stored session signer is invalid");
+    throw new Error(errorMessage);
   }
-  return Keypair.fromSecretKey(Uint8Array.from(session.sessionSignerSecret));
+  return Keypair.fromSecretKey(Uint8Array.from(secret));
 }
 
 export function validateStoredSessionShape(
@@ -41,14 +57,22 @@ export function validateStoredSessionShape(
     typeof session.sessionToken !== "string" ||
     typeof session.allowanceMinor !== "string" ||
     typeof session.validUntil !== "number" ||
-    !Array.isArray(session.sessionSignerSecret)
+    (session.setupComplete !== undefined && typeof session.setupComplete !== "boolean") ||
+    !Array.isArray(session.sessionSignerSecret) ||
+    (session.erFeePayerSecret !== undefined && !Array.isArray(session.erFeePayerSecret))
   ) return null;
   try {
     const keypair = sessionKeypair(session as StoredGameSession);
+    const hasFeePayer = Array.isArray(session.erFeePayerSecret);
+    if (hasFeePayer) sessionFeePayer(session as StoredGameSession);
     new PublicKey(session.sessionToken);
     BigInt(session.allowanceMinor);
     if (session.validUntil <= 0 || keypair.publicKey.equals(PublicKey.default)) return null;
-    return session as StoredGameSession;
+    return {
+      ...(session as StoredGameSession),
+      erFeePayerSecret: hasFeePayer ? session.erFeePayerSecret! : [],
+      setupComplete: hasFeePayer && (session.setupComplete ?? true),
+    };
   } catch {
     return null;
   }

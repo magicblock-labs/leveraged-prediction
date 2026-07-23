@@ -100,6 +100,7 @@ export function subscribeUserPositions(
     return () => undefined;
   }
   const address = userPositionsPda(programId, user);
+  const streamLabel = "[positions:websocket]";
   let subscriptionId: number | null = null;
   let disposed = false;
   let receivedWebsocketUpdate = false;
@@ -109,7 +110,13 @@ export function subscribeUserPositions(
       if (!account.owner.equals(programId)) {
         throw new Error("UserPositions websocket account has the wrong owner");
       }
-      if (fromWebsocket) receivedWebsocketUpdate = true;
+      if (fromWebsocket) {
+        receivedWebsocketUpdate = true;
+        console.info(streamLabel, "account update received", {
+          address: address.toBase58(),
+          dataBytes: account.data.length,
+        });
+      }
       onPositions({
         positions: decodeUserPositions(Buffer.from(account.data)),
         receivedAt: Date.now(),
@@ -134,6 +141,11 @@ export function subscribeUserPositions(
       void connection.removeAccountChangeListener(id).catch(onError);
     } else {
       subscriptionId = id;
+      console.info(streamLabel, "subscribed", {
+        address: address.toBase58(),
+        endpoint: config.erEndpoint,
+        subscriptionId: id,
+      });
     }
   } catch (error) {
     onError(error);
@@ -142,6 +154,10 @@ export function subscribeUserPositions(
   return () => {
     disposed = true;
     if (subscriptionId !== null) {
+      console.info(streamLabel, "unsubscribing", {
+        address: address.toBase58(),
+        subscriptionId,
+      });
       void connection.removeAccountChangeListener(subscriptionId).catch(onError);
     }
   };

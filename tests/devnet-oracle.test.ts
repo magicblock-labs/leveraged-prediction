@@ -4,6 +4,8 @@ import { subscribeOraclePrice } from "@/app/lib/live/oracle-stream";
 const suite = process.env.LIVE_ORACLE_E2E === "1" ? describe : describe.skip;
 const BTC_ORACLE = "71wtTRDY8Gxgw56bXFt2oc6qeAbTxzStdNiC425Z51sr";
 const BTC_FEED_ID = "59642ec3906a38d1267d4aafac36a5e2a47e6d38ed7e5b5843dd287e5e21ab65";
+const BTC_ORACLE_ER =
+  process.env.LIVE_ORACLE_ER_ENDPOINT ?? "https://devnet-as.magicblock.app";
 
 suite("MagicBlock devnet BTC oracle", () => {
   it("streams fully verified, monotonically newer BTC/USD updates", async () => {
@@ -19,7 +21,7 @@ suite("MagicBlock devnet BTC oracle", () => {
 
         stop = subscribeOraclePrice(
           {
-            erEndpoint: "https://devnet.magicblock.app",
+            erEndpoint: BTC_ORACLE_ER,
             oracleAddress: BTC_ORACLE,
             oracleFeedId: BTC_FEED_ID,
           },

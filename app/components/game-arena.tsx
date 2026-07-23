@@ -182,11 +182,13 @@ export function GameArena() {
       <div className="mode-badge"><span className={refreshing ? "pulse" : ""} />{snapshot.notice}</div>
 
       <SessionGate
+        key={session.session?.sessionToken ?? "new-session"}
         visible={Boolean(wallet.address) && !session.ready}
         busy={session.busy}
         defaultAllowanceUsd={session.defaultAllowanceUsd}
         walletBalanceUsd={snapshot.walletBalanceUsd}
-        status={session.progress}
+        progress={session.progress}
+        hasStoredSession={session.hasStoredSession}
         error={session.error}
         faucetAvailable={faucet.available}
         faucetBusy={faucet.busy}

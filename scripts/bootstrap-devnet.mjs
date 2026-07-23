@@ -188,8 +188,9 @@ if (!mintInfo) {
 }
 const mint = mintKeypair.publicKey;
 const adminAta = await getOrCreateAssociatedTokenAccount(base, admin, mint, admin.publicKey, false, "confirmed");
+const [adminEata] = deriveEphemeralAta(admin.publicKey, mint);
 const targetSupply = LIQUIDITY + WALLET_FLOAT;
-const userTokensDelegated = (await getDelegationStatus(adminAta.address)).isDelegated;
+const userTokensDelegated = (await getDelegationStatus(adminEata)).isDelegated;
 if (!userTokensDelegated && adminAta.amount < targetSupply) {
   await mintTo(base, admin, mint, adminAta.address, admin, targetSupply - adminAta.amount, [], { commitment: "confirmed" });
   console.log(`Minted ${Number(targetSupply - adminAta.amount) / 1_000_000} test USDC`);
@@ -280,12 +281,12 @@ if (!userTokensDelegated) {
   console.log(`Delegated ${Number(targetSupply) / 1_000_000} test USDC: ${signature}`);
 }
 
-for (const [label, owner, routedTokenAccount] of [
-  ["pool", market, poolTokenAccount],
-  ["fee", feeAuthority, feeTokenAccount],
+for (const [label, owner] of [
+  ["pool", market],
+  ["fee", feeAuthority],
 ]) {
   const [eata] = deriveEphemeralAta(owner, mint);
-  if (!(await getDelegationStatus(routedTokenAccount)).isDelegated) {
+  if (!(await getDelegationStatus(eata)).isDelegated) {
     const signature = await sendTransaction(base, new Transaction().add(
       initEphemeralAtaIx(eata, owner, mint, admin.publicKey),
       delegateEphemeralAtaIx(admin.publicKey, eata, validator),
@@ -306,9 +307,9 @@ if (!(await getDelegationStatus(market)).isDelegated) {
 for (const [label, account] of [
   ["market", market],
   ["deployer liquidity", userLiquidity],
-  ["deployer token", adminAta.address],
-  ["pool token", poolTokenAccount],
-  ["fee token", feeTokenAccount],
+  ["deployer token", adminEata],
+  ["pool token", deriveEphemeralAta(market, mint)[0]],
+  ["fee token", deriveEphemeralAta(feeAuthority, mint)[0]],
 ]) {
   await eventually(`${label} route`, async () => (await getDelegationStatus(account)).isDelegated);
 }

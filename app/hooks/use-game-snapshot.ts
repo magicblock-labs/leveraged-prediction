@@ -33,6 +33,16 @@ function oracleStreamKey(snapshot: MarketSnapshot): string | null {
   return `${snapshot.erEndpoint}:${snapshot.oracleAddress}:${snapshot.oracleFeedId}`;
 }
 
+function positionStreamKeyFor(
+  snapshot: MarketSnapshot,
+  walletAddress: string | null,
+): string | null {
+  const oracleKey = oracleStreamKey(snapshot);
+  return oracleKey && walletAddress
+    ? `${oracleKey}:${walletAddress}`
+    : null;
+}
+
 export function useGameSnapshot(walletAddress: string | null) {
   const wallet = useWallet();
   const [snapshot, setSnapshot] = useState<MarketSnapshot | null>(null);
@@ -52,6 +62,10 @@ export function useGameSnapshot(walletAddress: string | null) {
     lastReceivedAt: number;
     publishTime: number;
   } | null>(null);
+  const positionStreamRef = useRef<{
+    key: string;
+    lastReceivedAt: number;
+  } | null>(null);
 
   const refresh = useCallback(async () => {
     if (requestInFlight.current) return;
@@ -67,6 +81,13 @@ export function useGameSnapshot(walletAddress: string | null) {
         const stream = streamRef.current;
         const currentKey = current ? oracleStreamKey(current) : null;
         const nextKey = oracleStreamKey(body);
+        const positionStream = positionStreamRef.current;
+        const currentPositionKey = current
+          ? positionStreamKeyFor(current, walletAddress)
+          : null;
+        const nextPositionKey = positionStreamKeyFor(body, walletAddress);
+        let next = body;
+        let preservedStream = false;
         if (
           current &&
           stream &&
@@ -75,8 +96,8 @@ export function useGameSnapshot(walletAddress: string | null) {
           Date.now() - stream.lastReceivedAt <= 5_000
         ) {
           const feed = feedHealthAt(stream.publishTime, Date.now());
-          return {
-            ...body,
+          next = {
+            ...next,
             currentPrice: current.currentPrice,
             priceHistory: current.priceHistory,
             feedAgeSeconds: feed.ageSeconds,
@@ -84,8 +105,23 @@ export function useGameSnapshot(walletAddress: string | null) {
             capturedAt: current.capturedAt,
             notice: current.notice,
           };
+          preservedStream = true;
         }
-        return body;
+        if (
+          current &&
+          positionStream &&
+          currentPositionKey === nextPositionKey &&
+          nextPositionKey === positionStream.key &&
+          Date.now() - positionStream.lastReceivedAt <= 5_000
+        ) {
+          next = {
+            ...next,
+            plays: current.plays,
+            notice: current.notice,
+          };
+          preservedStream = true;
+        }
+        return preservedStream ? next : body;
       });
       setSnapshotError(null);
     } catch (cause) {
@@ -185,12 +221,15 @@ export function useGameSnapshot(walletAddress: string | null) {
     };
   }, [erEndpoint, oracleAddress, oracleFeedId, streamKey, wallet.publicKey, wallet.signMessage]);
 
-  const positionStreamKey = streamKey && wallet.publicKey
-    ? `${streamKey}:${wallet.publicKey.toBase58()}`
+  const positionStreamKey = snapshot
+    ? positionStreamKeyFor(snapshot, wallet.publicKey?.toBase58() ?? null)
     : null;
 
   useEffect(() => {
-    if (!positionStreamKey || !erEndpoint || !wallet.publicKey) return;
+    if (!positionStreamKey || !erEndpoint || !wallet.publicKey) {
+      positionStreamRef.current = null;
+      return;
+    }
     let active = true;
     let unsubscribe: () => void = () => undefined;
     const connect = async () => {
@@ -224,6 +263,10 @@ export function useGameSnapshot(walletAddress: string | null) {
           },
           (update) => {
             if (!active) return;
+            positionStreamRef.current = {
+              key: positionStreamKey,
+              lastReceivedAt: update.receivedAt,
+            };
             setSnapshot((current) => current
               ? applyPositionStreamUpdate(current, update)
               : current);
@@ -249,6 +292,9 @@ export function useGameSnapshot(walletAddress: string | null) {
     void connect();
     return () => {
       active = false;
+      if (positionStreamRef.current?.key === positionStreamKey) {
+        positionStreamRef.current = null;
+      }
       unsubscribe();
     };
   }, [erEndpoint, positionStreamKey, programId, snapshot?.marketId, wallet.publicKey, wallet.signMessage]);

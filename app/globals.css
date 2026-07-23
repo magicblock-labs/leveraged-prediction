@@ -473,6 +473,48 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--ink); outli
 .eyebrow { color: var(--mut); font-size: 12px; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase; }
 .session-dialog h2, .help-dialog h2 { margin: 6px 0 8px; font-size: 24px; font-weight: 700; letter-spacing: -0.4px; }
 .session-dialog > p { margin: 0 0 20px; color: var(--mut); font-size: 13.5px; }
+.session-stepper {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0;
+  margin: 0 0 20px;
+  padding: 0;
+  list-style: none;
+}
+.session-stepper li {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  color: var(--mut);
+}
+.session-stepper li:not(:last-child)::after {
+  position: absolute;
+  z-index: 0;
+  top: 11px;
+  left: calc(50% + 12px);
+  width: calc(100% - 24px);
+  height: 1px;
+  background: var(--hair);
+  content: "";
+}
+.session-stepper li.complete:not(:last-child)::after { background: var(--ink); }
+.session-stepper li > span {
+  z-index: 1;
+  display: grid;
+  width: 23px;
+  height: 23px;
+  place-items: center;
+  border: 1px solid var(--hair);
+  border-radius: 50%;
+  background: var(--card);
+  font-size: 11px;
+  font-weight: 700;
+}
+.session-stepper li.active { color: var(--ink); }
+.session-stepper li.active > span { border-color: var(--ink); box-shadow: 0 0 0 3px var(--bg); }
+.session-stepper li.complete > span { border-color: var(--ink); background: var(--ink); color: var(--bg); }
+.session-stepper small { overflow: hidden; max-width: 100%; font-size: 10px; text-overflow: ellipsis; }
 .session-dialog > label { display: block; margin-bottom: 6px; color: var(--mut); font-size: 12px; font-weight: 600; }
 .session-allowance {
   display: flex;
