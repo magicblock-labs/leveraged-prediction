@@ -16,7 +16,7 @@ const sharedProps = {
 };
 
 describe("session setup dialog", () => {
-  it("shows all setup steps for a new session", () => {
+  it("presents setup as one user-facing action", () => {
     const html = renderToStaticMarkup(createElement(SessionGate, {
       ...sharedProps,
       hasStoredSession: false,
@@ -27,13 +27,8 @@ describe("session setup dialog", () => {
     }));
 
     expect(html).toContain("Start your play session");
-    expect(html).toContain('aria-current="step"');
-    expect(html.match(/<li/g)).toHaveLength(5);
-    expect(html).toContain(">Session<");
-    expect(html).toContain(">Accounts<");
-    expect(html).toContain(">Funds<");
-    expect(html).toContain(">Fees<");
-    expect(html).toContain(">Approval<");
+    expect(html).not.toContain("session-stepper");
+    expect(html).toContain("Starting a session authorizes");
   });
 
   it("marks session creation complete when local session state exists", () => {
@@ -48,7 +43,6 @@ describe("session setup dialog", () => {
 
     expect(html).toContain("Finish your play session");
     expect(html).toContain("without creating another one");
-    expect(html).toContain("✓");
     expect(html).toContain("Continue setup");
   });
 });

@@ -1,18 +1,12 @@
 use anchor_lang::prelude::*;
-use anchor_lang::solana_program::sysvar::SysvarId;
 use anchor_lang::system_program::{transfer as transfer_lamports, Transfer as LamportsTransfer};
 use anchor_lang::InstructionData;
 use anchor_spl::associated_token::AssociatedToken;
 use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer as SplTransfer};
+use ephemeral_rollups_sdk::consts::MAGIC_PROGRAM_ID;
 use ephemeral_rollups_sdk::cpi::DelegateConfig;
-use hydra_api::{
-    consts::{CRANKER_REWARD as HYDRA_CRANKER_REWARD, MAX_INSTRUCTIONS, SERIALIZED_META_SIZE},
-    cpi::native as hydra_cpi,
-    instruction::{CreateArgs as HydraCreateArgs, SchedMeta, ScheduledIx, CREATE_IX_HEADER_LEN},
-    state::crank_account_size,
-};
+use magicblock_magic_program_api::{args::ScheduleTaskArgs, instruction::MagicBlockInstruction};
 use pyth_solana_receiver_sdk::price_update::{Price, PriceUpdateV2, VerificationLevel};
-use solana_instructions_sysvar::{load_current_index_checked, load_instruction_at_checked};
 
 use crate::error::ErrorCode;
 use crate::math::{
@@ -25,19 +19,18 @@ use crate::state::{
     CompactPosition, Direction, Market, MarketMode, ProtocolConfig, UserLiquidity, UserPositions,
 };
 use crate::{
-    hydra_crank_address, hydra_task_seed, FallbackPayoutClaimed, LiquidityDeposited,
+    settlement_crank_signer, settlement_task_id, FallbackPayoutClaimed, LiquidityDeposited,
     MarketModeChanged, ProtocolFeesWithdrawn, SettleOutcome, SettlePositionResult,
     WithdrawalCancelled, WithdrawalExecuted, WithdrawalRequested, COLLATERAL_DECIMALS, CONFIG_SEED,
-    FEE_AUTHORITY_SEED, HYDRA_COMPUTE_UNIT_LIMIT, HYDRA_FIRST_ATTEMPT_DELAY_SLOTS,
-    HYDRA_INTERVAL_SLOTS, HYDRA_REMAINING_ATTEMPTS, LEVERAGE, MARKET_SEED, MAX_MARKET_EQUITY,
-    MAX_POSITION_COLLATERAL, MIN_MARKET_EQUITY, MIN_POSITION_COLLATERAL, ORACLE_EXPONENT,
-    ORACLE_MAX_AGE_SECONDS, ORACLE_MAX_CONFIDENCE_BPS, ORACLE_PROGRAM_ID,
-    POSITION_DURATION_SECONDS, PROFIT_FEE_BPS, PROTOCOL_FEE_SHARE_BPS, SAFETY_BUFFER_BPS,
-    SETTLEMENT_BUFFER_SECONDS, USER_LIQUIDITY_SEED, USER_OPEN_COLLATERAL_BPS, USER_POSITIONS_SEED,
+    FEE_AUTHORITY_SEED, LEVERAGE, MARKET_SEED, MAX_MARKET_EQUITY, MAX_POSITION_COLLATERAL,
+    MIN_MARKET_EQUITY, MIN_POSITION_COLLATERAL, ORACLE_EXPONENT, ORACLE_MAX_AGE_SECONDS,
+    ORACLE_MAX_CONFIDENCE_BPS, ORACLE_PROGRAM_ID, POSITION_DURATION_SECONDS, PROFIT_FEE_BPS,
+    PROTOCOL_FEE_SHARE_BPS, SAFETY_BUFFER_BPS, SETTLEMENT_BUFFER_SECONDS,
+    SETTLEMENT_TASK_INTERVAL_MILLIS, SETTLEMENT_TASK_ITERATIONS, USER_LIQUIDITY_SEED,
+    USER_OPEN_COLLATERAL_BPS, USER_POSITIONS_SEED,
 };
 
 const DELEGATED_STATE_COMMIT_FREQUENCY_MS: u32 = 10_000;
-pub(crate) const HYDRA_PROGRAM_ID: Pubkey = pubkey!("Hydra17i1feui9deaxu6d1TzSQMRNHeBRkDR1Awy7zea");
 
 pub mod cancel_withdrawal;
 pub mod claim_fallback_payout;

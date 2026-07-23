@@ -5,7 +5,12 @@ import {
   type Commitment,
 } from "@solana/web3.js";
 import { Buffer } from "buffer";
-import type { FeedHealth, MarketSnapshot, PricePoint } from "@/app/lib/domain";
+import {
+  updatePlayPriceMove,
+  type FeedHealth,
+  type MarketSnapshot,
+  type PricePoint,
+} from "@/app/lib/domain";
 import { ORACLE_PROGRAM_ID } from "@/app/lib/live/config";
 import {
   decodeOraclePrice,
@@ -80,7 +85,9 @@ export function applyOracleStreamUpdate(
   return {
     ...snapshot,
     currentPrice: update.displayPrice,
+    currentRawPrice: update.rawPrice.toString(),
     priceHistory: appendOraclePrice(snapshot.priceHistory, update),
+    plays: snapshot.plays.map((play) => updatePlayPriceMove(play, update.displayPrice)),
     feedAgeSeconds: feed.ageSeconds,
     feedHealth: feed.health,
     capturedAt: update.receivedAt,

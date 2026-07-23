@@ -133,7 +133,19 @@ describe("routed ER oracle websocket", () => {
       walletAddress: null,
       walletBalanceUsd: null,
       fallbackClaimableUsd: 0,
-      plays: [],
+      plays: [{
+        id: "1-1",
+        marketId: 1,
+        direction: "up",
+        collateralUsd: 10,
+        entryPrice: 100,
+        openedAt: 100_000,
+        expiresAt: 110_000,
+        refundAt: 120_000,
+        status: "active",
+        priceMovePercent: 0,
+        liveProfitUsd: 0,
+      }],
       capturedAt: 100_000,
     };
     const next = applyOracleStreamUpdate(snapshot, {
@@ -147,6 +159,8 @@ describe("routed ER oracle websocket", () => {
 
     expect(next.currentPrice).toBe(101);
     expect(next.priceHistory.at(-1)).toEqual({ price: 101, timestamp: 101_200 });
+    expect(next.plays[0].priceMovePercent).toBe(1);
+    expect(next.plays[0].liveProfitUsd).toBe(45);
     expect(next.feedHealth).toBe("live");
     expect(next.notice).toMatch(/websocket connected/);
   });

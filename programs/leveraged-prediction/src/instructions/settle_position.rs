@@ -1,16 +1,6 @@
 use super::*;
 
 pub fn handler(ctx: Context<SettlePosition>, nonce: u32, task_salt: [u8; 32]) -> Result<()> {
-    let expected_crank = hydra_crank_address(
-        ctx.accounts.market.key(),
-        ctx.accounts.user.key(),
-        nonce,
-        task_salt,
-    );
-    require_hydra_trigger(
-        &ctx.accounts.instructions_sysvar.to_account_info(),
-        expected_crank,
-    )?;
     let clock = Clock::get()?;
     let Some(position_index) = ctx
         .accounts
@@ -33,7 +23,7 @@ pub fn handler(ctx: Context<SettlePosition>, nonce: u32, task_salt: [u8; 32]) ->
     let position = ctx.accounts.user_positions.positions[position_index];
     require!(
         position.task_salt == task_salt,
-        ErrorCode::InvalidHydraTrigger
+        ErrorCode::InvalidSettlementTrigger
     );
     let collateral = u64::from(position.collateral);
     let expires_at = i64::from(position.expires_at);
@@ -172,37 +162,9 @@ pub fn handler(ctx: Context<SettlePosition>, nonce: u32, task_salt: [u8; 32]) ->
     Ok(())
 }
 
-pub(crate) fn require_hydra_trigger(
-    instructions_sysvar: &AccountInfo<'_>,
-    expected_crank: Pubkey,
-) -> Result<()> {
-    let current_index = load_current_index_checked(instructions_sysvar)
-        .map_err(|_| error!(ErrorCode::InvalidHydraTrigger))?;
-    let previous_index = current_index
-        .checked_sub(1)
-        .ok_or(ErrorCode::InvalidHydraTrigger)?;
-    let previous = load_instruction_at_checked(usize::from(previous_index), instructions_sysvar)
-        .map_err(|_| error!(ErrorCode::InvalidHydraTrigger))?;
-    require_keys_eq!(
-        previous.program_id,
-        HYDRA_PROGRAM_ID,
-        ErrorCode::InvalidHydraTrigger
-    );
-    require!(
-        previous.data == [hydra_api::consts::ix::TRIGGER],
-        ErrorCode::InvalidHydraTrigger
-    );
-    let crank = previous
-        .accounts
-        .first()
-        .ok_or(ErrorCode::InvalidHydraTrigger)?;
-    require_keys_eq!(crank.pubkey, expected_crank, ErrorCode::InvalidHydraTrigger);
-    Ok(())
-}
-
 #[derive(Accounts)]
 pub struct SettlePosition<'info> {
-    /// CHECK: Bound through the UserPositions PDA and the authenticated Hydra task.
+    /// CHECK: Bound through the UserPositions PDA and the authenticated scheduler signer.
     pub user: UncheckedAccount<'info>,
     #[account(seeds = [CONFIG_SEED], bump = protocol_config.bump, has_one = collateral_mint)]
     pub protocol_config: Box<Account<'info, ProtocolConfig>>,
@@ -227,7 +189,8 @@ pub struct SettlePosition<'info> {
     #[account(address = market.oracle)]
     pub price_update: UncheckedAccount<'info>,
     pub token_program: Program<'info, Token>,
-    /// CHECK: Parsed to authenticate the immediately preceding Hydra Trigger.
-    #[account(address = Instructions::id())]
-    pub instructions_sysvar: UncheckedAccount<'info>,
+    #[account(
+        address = settlement_crank_signer(market.key()) @ ErrorCode::InvalidSettlementTrigger
+    )]
+    pub crank_signer: Signer<'info>,
 }

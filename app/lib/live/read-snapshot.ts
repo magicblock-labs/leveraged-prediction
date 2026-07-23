@@ -78,6 +78,7 @@ export async function readLiveSnapshot(walletAddress?: string): Promise<MarketSn
 
   let walletBalanceUsd: number | null = null;
   let fallbackClaimableUsd = 0;
+  let collateralMintAddress: string | undefined;
   let plays: Play[] = [];
   let normalizedWallet: string | null = null;
   if (walletAddress) {
@@ -111,6 +112,7 @@ export async function readLiveSnapshot(walletAddress?: string): Promise<MarketSn
     if (configInfo) {
       const protocol = decodeProtocolConfig(Buffer.from(configInfo.data));
       const collateralMint = config.collateralMint ?? new PublicKey(protocol.collateralMint);
+      collateralMintAddress = collateralMint.toBase58();
       const userTokenAccount = getAssociatedTokenAddressSync(collateralMint, user);
       const payoutEscrowTokenAccount = getAssociatedTokenAddressSync(
         collateralMint,
@@ -133,12 +135,14 @@ export async function readLiveSnapshot(walletAddress?: string): Promise<MarketSn
     marketLabel: "BTC / USD",
     gameLabel: "BTC PRICE RUSH",
     currentPrice: price.displayPrice,
+    currentRawPrice: price.rawPrice.toString(),
     priceExponent: ORACLE_EXPONENT,
     priceHistory: updateHistory(oracleAddress.toBase58(), price.displayPrice, now),
     feedHealth: "live",
     feedAgeSeconds: price.ageSeconds,
     marketMode: market.mode,
     activePositions: market.activePositions,
+    nextPositionNonce: market.nextPositionNonce,
     maxPositions: 8,
     walletAddress: normalizedWallet,
     walletBalanceUsd,
@@ -146,6 +150,7 @@ export async function readLiveSnapshot(walletAddress?: string): Promise<MarketSn
     plays,
     capturedAt: now,
     erEndpoint,
+    collateralMint: collateralMintAddress,
     oracleAddress: oracleAddress.toBase58(),
     oracleFeedId: Buffer.from(market.oracleFeedId).toString("hex"),
     notice: "Live mode · oracle websocket ready",

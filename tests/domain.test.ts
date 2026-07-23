@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { maximumProfit, playStatusAt, type Play } from "@/app/lib/domain";
+import {
+  estimateProfit,
+  maximumProfit,
+  playStatusAt,
+  priceMovePercent,
+  type Play,
+} from "@/app/lib/domain";
 
 const play: Play = {
   id: "1-1",
@@ -14,8 +20,17 @@ const play: Play = {
 };
 
 describe("frontend economics and lifecycle", () => {
-  it("shows the capped profit after the 10% profit fee", () => {
-    expect(maximumProfit(10)).toBe(9);
+  it("shows the 5x gross profit cap after the 10% profit fee", () => {
+    expect(maximumProfit(10)).toBe(45);
+  });
+
+  it("estimates 1000x price movement and caps both sides", () => {
+    expect(estimateProfit(10, 100, 100.1, "up")).toBeCloseTo(9);
+    expect(estimateProfit(10, 100, 99.9, "down")).toBeCloseTo(9);
+    expect(estimateProfit(10, 100, 101, "up")).toBe(45);
+    expect(estimateProfit(10, 100, 99, "up")).toBe(-10);
+    expect(priceMovePercent(100, 100.1, "up")).toBeCloseTo(0.1);
+    expect(priceMovePercent(100, 99.9, "down")).toBeCloseTo(0.1);
   });
 
   it("keeps an expired play in settling before the refund deadline", () => {

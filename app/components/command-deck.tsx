@@ -9,6 +9,7 @@ interface CommandDeckProps {
   occupiedPositions: number;
   busy?: boolean;
   sessionReady?: boolean;
+  submissionReady?: boolean;
   sessionAllowanceUsd?: number | null;
   statusMessage?: string | null;
   needsRecovery?: boolean;
@@ -18,7 +19,7 @@ interface CommandDeckProps {
 
 const PRESETS = [5, 10, 25];
 
-export function CommandDeck({ snapshot, occupiedPositions, busy = false, sessionReady = false, sessionAllowanceUsd = null, statusMessage, needsRecovery = false, onPlay, onRecover }: CommandDeckProps) {
+export function CommandDeck({ snapshot, occupiedPositions, busy = false, sessionReady = false, submissionReady = false, sessionAllowanceUsd = null, statusMessage, needsRecovery = false, onPlay, onRecover }: CommandDeckProps) {
   const inputId = useId();
   const [amount, setAmount] = useState(10);
   const capacityReached = occupiedPositions >= snapshot.maxPositions;
@@ -26,7 +27,7 @@ export function CommandDeck({ snapshot, occupiedPositions, busy = false, session
   const walletConnected = snapshot.walletAddress !== null;
   const hasBalance = snapshot.walletBalanceUsd !== null && snapshot.walletBalanceUsd >= amount;
   const hasSessionAllowance = sessionReady && sessionAllowanceUsd !== null && sessionAllowanceUsd >= amount;
-  const blocked = busy || needsRecovery || !walletConnected || !hasSessionAllowance || !hasBalance || snapshot.marketMode !== "open" || capacityReached || marketCapacityReached;
+  const blocked = busy || needsRecovery || !walletConnected || !hasSessionAllowance || !submissionReady || !hasBalance || snapshot.marketMode !== "open" || capacityReached || marketCapacityReached;
   const fundingMessage = walletConnected && !hasBalance
     ? snapshot.walletBalanceUsd === null
       ? "USDC account setup is not ready"
@@ -34,6 +35,10 @@ export function CommandDeck({ snapshot, occupiedPositions, busy = false, session
     : sessionReady && !hasSessionAllowance
       ? `Session has $${(sessionAllowanceUsd ?? 0).toFixed(2)} left · choose a smaller play`
     : null;
+  const visibleStatusMessage = statusMessage?.startsWith("Playing ") ||
+    statusMessage?.startsWith("Play sent")
+    ? null
+    : statusMessage;
 
   return (
     <section className="ticket" aria-label="Play controls">
@@ -69,8 +74,8 @@ export function CommandDeck({ snapshot, occupiedPositions, busy = false, session
       </div>
 
       <p className="economics num" aria-live="polite">
-        <b>10 sec · 1000× sensitivity</b> — max profit <b className="positive">+${maximumProfit(amount).toFixed(2)}</b> after
-        fee, max loss <b className="negative">−${amount.toFixed(2)}</b>.
+        <b>10 sec · 1000× price move</b> — profit capped at <b className="positive">5× stake</b>
+        {" "}(+${maximumProfit(amount).toFixed(2)} after fee), max loss <b className="negative">−${amount.toFixed(2)}</b>.
       </p>
 
       <div className="direction-actions">
@@ -100,9 +105,9 @@ export function CommandDeck({ snapshot, occupiedPositions, busy = false, session
 
       {capacityReached ? <p className="write-lock">{snapshot.maxPositions}/{snapshot.maxPositions} play slots filled · wait for a result</p> : null}
       {!capacityReached && marketCapacityReached ? <p className="write-lock">Market full · {snapshot.maxPositions} active positions</p> : null}
-      {!capacityReached && !marketCapacityReached && (fundingMessage || statusMessage) ? (
+      {!capacityReached && !marketCapacityReached && (fundingMessage || visibleStatusMessage) ? (
         <div className="write-lock" role="status">
-          <span>{fundingMessage ?? statusMessage}</span>
+          <span>{fundingMessage ?? visibleStatusMessage}</span>
           {needsRecovery && onRecover ? <button onClick={onRecover} type="button">Check status</button> : null}
         </div>
       ) : null}

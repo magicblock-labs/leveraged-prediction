@@ -150,7 +150,7 @@ pub struct MarketLiquidity {
 pub struct CompactPosition {
     pub market_id: u16,
     pub nonce: u32,
-    /// Authenticates the Hydra task created for this position.
+    /// Makes the native scheduler task ID unique and binds retries to this position.
     pub task_salt: [u8; 32],
     pub collateral: u32,
     pub entry_price: i64,

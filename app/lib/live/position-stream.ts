@@ -5,13 +5,19 @@ import {
   type Commitment,
 } from "@solana/web3.js";
 import { Buffer } from "buffer";
-import type { MarketSnapshot, Play } from "@/app/lib/domain";
 import {
+  estimateProfit,
+  priceMovePercent,
+  type MarketSnapshot,
+  type Play,
+} from "@/app/lib/domain";
+import {
+  decodeMarket,
   decodeUserPositions,
   type DecodedCompactPosition,
 } from "@/app/lib/live/decode";
 import { ORACLE_EXPONENT } from "@/app/lib/live/oracle";
-import { userPositionsPda } from "@/app/lib/live/pdas";
+import { marketPda, userPositionsPda } from "@/app/lib/live/pdas";
 
 const COMMITMENT: Commitment = "confirmed";
 const PRICE_SCALE = 10 ** ORACLE_EXPONENT;
@@ -41,6 +47,13 @@ export interface PositionStreamUpdate {
   receivedAt: number;
 }
 
+export interface MarketStreamUpdate {
+  activePositions: number;
+  nextPositionNonce: number;
+  marketMode: "open" | "close-only";
+  receivedAt: number;
+}
+
 export function positionToPlay(
   position: DecodedCompactPosition,
   now: number,
@@ -49,21 +62,28 @@ export function positionToPlay(
   const expiresAt = position.expiresAt * 1_000;
   const refundAt = expiresAt + 10_000;
   const entryPrice = Number(position.entryPrice) / PRICE_SCALE;
-  const isFavorable =
-    position.direction === "up" ? currentPrice > entryPrice : currentPrice < entryPrice;
+  const collateralUsd = position.collateral / 1_000_000;
   return {
     id: `${position.marketId}-${position.nonce}`,
     marketId: position.marketId,
     direction: position.direction,
-    collateralUsd: position.collateral / 1_000_000,
+    collateralUsd,
     entryPrice,
     openedAt: expiresAt - 10_000,
     expiresAt,
     refundAt,
     status: now < expiresAt ? "active" : now < refundAt ? "settling" : "refunding",
-    estimateUsd: isFavorable
-      ? (position.collateral / 1_000_000) * 0.9
-      : -(position.collateral / 1_000_000),
+    priceMovePercent: priceMovePercent(
+      entryPrice,
+      currentPrice,
+      position.direction,
+    ),
+    liveProfitUsd: estimateProfit(
+      collateralUsd,
+      entryPrice,
+      currentPrice,
+      position.direction,
+    ),
   };
 }
 
@@ -77,6 +97,89 @@ export function applyPositionStreamUpdate(
       .filter((position) => position.marketId === snapshot.marketId)
       .map((position) => positionToPlay(position, update.receivedAt, snapshot.currentPrice)),
     notice: "Live mode · oracle and position websockets connected",
+  };
+}
+
+export function applyMarketStreamUpdate(
+  snapshot: MarketSnapshot,
+  update: MarketStreamUpdate,
+): MarketSnapshot {
+  return {
+    ...snapshot,
+    activePositions: update.activePositions,
+    nextPositionNonce: update.nextPositionNonce,
+    marketMode: update.marketMode,
+    notice: "Live mode · oracle, Market, and position websockets connected",
+  };
+}
+
+export function subscribeMarketState(
+  config: Omit<PositionStreamConfig, "userAddress">,
+  onMarket: (update: MarketStreamUpdate) => void,
+  onError: (error: unknown) => void,
+  suppliedConnection?: PositionStreamConnection,
+): () => void {
+  let connection: PositionStreamConnection;
+  let programId: PublicKey;
+  try {
+    connection = suppliedConnection ?? new Connection(config.erEndpoint, {
+      commitment: COMMITMENT,
+    });
+    programId = new PublicKey(config.programId);
+  } catch (error) {
+    onError(error);
+    return () => undefined;
+  }
+  const address = marketPda(programId, config.marketId);
+  let subscriptionId: number | null = null;
+  let disposed = false;
+  let receivedWebsocketUpdate = false;
+
+  const receive = (account: AccountInfo<Buffer>, fromWebsocket = true) => {
+    try {
+      if (!account.owner.equals(programId)) {
+        throw new Error("Market websocket account has the wrong owner");
+      }
+      if (fromWebsocket) receivedWebsocketUpdate = true;
+      const market = decodeMarket(Buffer.from(account.data));
+      if (market.marketId !== config.marketId) {
+        throw new Error("Market websocket account has the wrong ID");
+      }
+      onMarket({
+        activePositions: market.activePositions,
+        nextPositionNonce: market.nextPositionNonce,
+        marketMode: market.mode,
+        receivedAt: Date.now(),
+      });
+    } catch (error) {
+      onError(error);
+    }
+  };
+
+  void connection.getAccountInfo(address, COMMITMENT)
+    .then((account) => {
+      if (disposed || receivedWebsocketUpdate) return;
+      if (!account) throw new Error("Market websocket account was not found");
+      receive(account, false);
+    })
+    .catch(onError);
+
+  try {
+    const id = connection.onAccountChange(address, receive, COMMITMENT);
+    if (disposed) {
+      void connection.removeAccountChangeListener(id).catch(onError);
+    } else {
+      subscriptionId = id;
+    }
+  } catch (error) {
+    onError(error);
+  }
+
+  return () => {
+    disposed = true;
+    if (subscriptionId !== null) {
+      void connection.removeAccountChangeListener(subscriptionId).catch(onError);
+    }
   };
 }
 

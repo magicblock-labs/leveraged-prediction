@@ -6,7 +6,6 @@ import {
 import {
   DELEGATION_PROGRAM_ID,
   EPHEMERAL_SPL_TOKEN_PROGRAM_ID,
-  createDelegateInstruction,
   decodeEphemeralAta,
   delegateEphemeralAtaIx,
   deriveEphemeralAta,
@@ -29,13 +28,15 @@ import {
   getAssociatedTokenAddressSync,
 } from "@solana/spl-token";
 import {
+  AddressLookupTableAccount,
   ComputeBudgetInstruction,
   ComputeBudgetProgram,
   Connection,
   Keypair,
   PublicKey,
-  SystemProgram,
   Transaction,
+  TransactionMessage,
+  VersionedTransaction,
   type Signer,
   type TransactionInstruction,
 } from "@solana/web3.js";
@@ -48,13 +49,11 @@ import {
 } from "@/app/lib/live/decode";
 import {
   claimFallbackPayoutInstruction,
-  deriveHydraCrank,
   delegateUserPositionsInstruction,
   initializeUserPositionsInstruction,
   openPositionInstruction,
 } from "@/app/lib/live/instructions";
 import {
-  clearOpenIntent,
   createOpenIntent,
   hexToBytes,
   loadOpenIntent,
@@ -72,16 +71,13 @@ import {
   browserSafeDepositSplTokensIx,
   browserSafeSetupAndDelegateShuttleIx,
 } from "@/app/lib/live/espl-instructions";
-import { decodeOraclePrice } from "@/app/lib/live/oracle";
 import {
   getDelegationStatus,
   normalizeErEndpoint,
   type DelegationStatus,
 } from "@/app/lib/live/router";
-import { ORACLE_PROGRAM_ID } from "@/app/lib/live/config";
 import {
   SESSION_DURATION_SECONDS,
-  sessionFeePayer,
   sessionKeypair,
   type StoredGameSession,
 } from "@/app/lib/live/session-store";
@@ -96,7 +92,7 @@ const CONFIRMATION_WARNING_MS = 15_000;
 const CONFIRMATION_POLL_MS = 500;
 const MAX_WALLET_COMPUTE_UNIT_LIMIT = 1_400_000;
 const MAX_WALLET_COMPUTE_UNIT_PRICE_MICRO_LAMPORTS = 1_000_000n;
-const ER_FEE_PAYER_LAMPORTS = 10_000_000;
+const MAX_TRANSACTION_BYTES = 1_232;
 const SESSION_TOKEN_PROGRAM_ID = GPLSESSION_PROGRAMS.devnet;
 
 export type TransactionPhase =
@@ -104,7 +100,6 @@ export type TransactionPhase =
   | "initializing-positions"
   | "provisioning-payout"
   | "depositing-collateral"
-  | "preparing-fee-payer"
   | "verifying-route"
   | "submitting"
   | "confirming"
@@ -122,7 +117,6 @@ export interface SessionProgress {
     | "creating"
     | "preparing-accounts"
     | "depositing"
-    | "preparing-fee-payer"
     | "approving"
     | "ready";
   message: string;
@@ -175,7 +169,6 @@ export async function claimFallbackPayoutFlow(
   ]);
   const payout = await getAccount(context.erConnection, payoutEscrowTokenAccount, "confirmed");
   if (payout.amount === 0n) return null;
-  const feePayer = await ensureErFeePayer(context, signTransaction, onStatus);
   onStatus(`Claiming ${Number(payout.amount) / 1_000_000} USDC…`);
 
   const instruction = claimFallbackPayoutInstruction(context.programId, {
@@ -197,11 +190,7 @@ export async function claimFallbackPayoutFlow(
         submittedSignature = signature;
         onStatus("Claim sent. Confirming your balance…");
       },
-      {
-        feePayer: feePayer.publicKey,
-        additionalSigners: [feePayer],
-        label: "payout:claim",
-      },
+      { label: "payout:claim" },
     );
   } catch (cause) {
     await sleep(300);
@@ -225,6 +214,7 @@ interface LiveWriteContext {
   erConnection: Connection;
   routerEndpoint: string;
   erEndpoint: string;
+  sessionSetupLookupTable?: PublicKey;
   validator: PublicKey;
   programId: PublicKey;
   marketId: number;
@@ -237,12 +227,48 @@ interface LiveWriteContext {
   oracle: PublicKey;
 }
 
+interface PreparedBlockhash {
+  blockhash: string;
+  lastValidBlockHeight: number;
+  minContextSlot: number;
+  updatedAt: number;
+}
+
+export interface PreparedOpenPositionContext {
+  user: PublicKey;
+  programId: PublicKey;
+  marketId: number;
+  erEndpoint: string;
+  erConnection: Connection;
+  sessionSigner: Keypair;
+  sessionToken: PublicKey;
+  protocolConfig: PublicKey;
+  market: PublicKey;
+  userPositions: PublicKey;
+  poolTokenAccount: PublicKey;
+  derivedFeeAuthority: PublicKey;
+  feeTokenAccount: PublicKey;
+  userTokenAccount: PublicKey;
+  payoutEscrowTokenAccount: PublicKey;
+  collateralMint: PublicKey;
+  priceUpdate: PublicKey;
+  blockhash: PreparedBlockhash;
+  blockhashRefresh?: Promise<void>;
+}
+
+export interface OpenPositionPreparationInput {
+  marketId: number;
+  walletAddress: string | null;
+  erEndpoint?: string;
+  collateralMint?: string;
+  oracleAddress?: string;
+}
+
 interface OnboardingCallbacks {
   status(
     phase: "initializing-positions" | "provisioning-payout" | "depositing-collateral",
     message: string,
   ): void;
-  submitted(signature: string): void;
 }
 
 type SignTransaction = NonNullable<WalletContextState["signTransaction"]>;
@@ -767,6 +793,158 @@ async function sendAndConfirm(
   );
 }
 
+function hasSignature(signature: Uint8Array | null | undefined): boolean {
+  return Boolean(signature?.some((byte) => byte !== 0));
+}
+
+async function loadSetupLookupTable(
+  connection: Connection,
+  address: PublicKey,
+): Promise<AddressLookupTableAccount> {
+  const response = await connection.getAddressLookupTable(address, {
+    commitment: "confirmed",
+  });
+  if (!response.value) {
+    throw new Error(`Session setup lookup table ${address.toBase58()} is missing`);
+  }
+  if (response.value.state.deactivationSlot !== BigInt("18446744073709551615")) {
+    throw new Error(`Session setup lookup table ${address.toBase58()} is deactivated`);
+  }
+  return response.value;
+}
+
+async function sendBaseSetupAndConfirm(
+  context: LiveWriteContext,
+  signTransaction: SignTransaction,
+  instructions: TransactionInstruction[],
+  additionalSigners: Signer[],
+): Promise<string | null> {
+  if (instructions.length === 0) return null;
+  const connection = context.baseConnection;
+  const user = context.user;
+  const { context: blockhashContext, value: latest } =
+    await connection.getLatestBlockhashAndContext("confirmed");
+  const legacy = new Transaction({
+    feePayer: user,
+    blockhash: latest.blockhash,
+    lastValidBlockHeight: latest.lastValidBlockHeight,
+  }).add(...instructions);
+  if (additionalSigners.length > 0) legacy.partialSign(...additionalSigners);
+
+  const requiredSignatureCount = legacy.compileMessage().header.numRequiredSignatures;
+  const legacyBytes =
+    legacy.serializeMessage().length +
+    1 +
+    requiredSignatureCount * 64;
+  if (legacyBytes <= MAX_TRANSACTION_BYTES) {
+    return sendAndConfirm(
+      connection,
+      user,
+      signTransaction,
+      instructions,
+      undefined,
+      {
+        additionalSigners,
+        label: "session:base-setup",
+      },
+    );
+  }
+
+  if (!context.sessionSetupLookupTable) {
+    throw new Error(
+      `Fresh session setup is ${legacyBytes} bytes and needs NEXT_PUBLIC_SESSION_SETUP_LOOKUP_TABLE`,
+    );
+  }
+  const lookupTable = await loadSetupLookupTable(
+    connection,
+    context.sessionSetupLookupTable,
+  );
+  const message = new TransactionMessage({
+    payerKey: user,
+    recentBlockhash: latest.blockhash,
+    instructions,
+  }).compileToV0Message([lookupTable]);
+  const transaction = new VersionedTransaction(message);
+  if (additionalSigners.length > 0) transaction.sign(additionalSigners);
+  const serializedBeforeWallet = transaction.serialize();
+  if (serializedBeforeWallet.length > MAX_TRANSACTION_BYTES) {
+    throw new Error(
+      `Session setup remains ${serializedBeforeWallet.length} bytes with lookup table ${lookupTable.key.toBase58()}`,
+    );
+  }
+
+  debugTransaction("session:base-setup", "prepared versioned wallet transaction", {
+    endpoint: safeRpcEndpoint(connection.rpcEndpoint),
+    feePayer: user.toBase58(),
+    wallet: user.toBase58(),
+    additionalSigners: additionalSigners.map((signer) => signer.publicKey.toBase58()),
+    lookupTable: lookupTable.key.toBase58(),
+    serializedBytes: serializedBeforeWallet.length,
+    blockhash: latest.blockhash,
+    lastValidBlockHeight: latest.lastValidBlockHeight,
+    minContextSlot: blockhashContext.slot,
+    instructions: instructionSummary(instructions),
+  });
+  const simulation = await connection.simulateTransaction(transaction, {
+    commitment: "confirmed",
+    minContextSlot: blockhashContext.slot,
+    sigVerify: false,
+  });
+  debugTransaction("session:base-setup", "simulation completed", {
+    endpoint: safeRpcEndpoint(connection.rpcEndpoint),
+    error: simulation.value.err,
+    unitsConsumed: simulation.value.unitsConsumed,
+    logs: simulation.value.logs,
+  }, simulation.value.err ? "error" : "info");
+  if (simulation.value.err) {
+    throw new Error(
+      `Transaction simulation failed during session:base-setup: ${JSON.stringify(simulation.value.err)}. Open the browser console for runtime logs.`,
+    );
+  }
+
+  const expectedMessage = transaction.message.serialize();
+  const signedTransaction = await signTransaction(transaction);
+  if (!(signedTransaction instanceof VersionedTransaction)) {
+    throw new Error("Wallet returned the wrong transaction type during session:base-setup");
+  }
+  if (!sameBytes(expectedMessage, signedTransaction.message.serialize())) {
+    throw new Error("Wallet changed the versioned transaction message during session:base-setup");
+  }
+  const requiredSigners = signedTransaction.message.staticAccountKeys.slice(
+    0,
+    signedTransaction.message.header.numRequiredSignatures,
+  );
+  for (const expectedSigner of [user, ...additionalSigners.map((signer) => signer.publicKey)]) {
+    const signerIndex = requiredSigners.findIndex((key) => key.equals(expectedSigner));
+    if (signerIndex < 0 || !hasSignature(signedTransaction.signatures[signerIndex])) {
+      throw new Error(
+        `Missing ${expectedSigner.equals(user) ? "wallet" : "session"} signature during session:base-setup`,
+      );
+    }
+  }
+
+  const rawTransaction = signedTransaction.serialize();
+  const signature = await connection.sendRawTransaction(rawTransaction, {
+    skipPreflight: false,
+    preflightCommitment: "confirmed",
+    minContextSlot: blockhashContext.slot,
+  });
+  debugTransaction("session:base-setup", "transaction submitted directly to configured RPC", {
+    endpoint: safeRpcEndpoint(connection.rpcEndpoint),
+    signature,
+    lookupTable: lookupTable.key.toBase58(),
+    blockhash: latest.blockhash,
+    lastValidBlockHeight: latest.lastValidBlockHeight,
+  });
+  return confirmSubmittedTransaction(
+    connection,
+    signature,
+    latest,
+    "session:base-setup",
+    rawTransaction,
+  );
+}
+
 function sessionTokenPda(
   programId: PublicKey,
   sessionSigner: PublicKey,
@@ -861,172 +1039,6 @@ function anchorBuildWallet(user: PublicKey): AnchorWallet {
     signTransaction: async <T extends Transaction>(transaction: T) => transaction,
     signAllTransactions: async <T extends Transaction>(transactions: T[]) => transactions,
   } as AnchorWallet;
-}
-
-async function sendWithKeypairsAndConfirm(
-  connection: Connection,
-  feePayer: Keypair,
-  instructions: TransactionInstruction[],
-  signers: Signer[],
-  onSubmitted?: (signature: string) => void,
-  label = "session",
-): Promise<string> {
-  const endpoint = safeRpcEndpoint(connection.rpcEndpoint);
-  const { context: blockhashContext, value: latest } =
-    await connection.getLatestBlockhashAndContext("confirmed");
-  const transaction = new Transaction({
-    feePayer: feePayer.publicKey,
-    blockhash: latest.blockhash,
-    lastValidBlockHeight: latest.lastValidBlockHeight,
-  }).add(...instructions);
-  const uniqueSigners = new Map(
-    [feePayer, ...signers].map((signer) => [signer.publicKey.toBase58(), signer]),
-  );
-  transaction.partialSign(...uniqueSigners.values());
-  const accountKeys = transaction.compileMessage().accountKeys.map((account, index) => ({
-    index,
-    address: account.toBase58(),
-  }));
-  const simulation = await connection.simulateTransaction(transaction);
-  debugTransaction(label, "prepared session-signed transaction", {
-    endpoint,
-    feePayer: feePayer.publicKey.toBase58(),
-    signers: [...uniqueSigners.keys()],
-    blockhash: latest.blockhash,
-    lastValidBlockHeight: latest.lastValidBlockHeight,
-    minContextSlot: blockhashContext.slot,
-    accountKeys,
-    instructions: instructionSummary(instructions),
-  });
-  debugTransaction(label, "simulation completed", {
-    endpoint,
-    error: simulation.value.err,
-    unitsConsumed: simulation.value.unitsConsumed,
-    logs: simulation.value.logs,
-  }, simulation.value.err ? "error" : "info");
-  if (simulation.value.err) {
-    throw new Error(
-      `Session transaction simulation failed during ${label}: ${JSON.stringify(simulation.value.err)}. Open the browser console for runtime logs.`,
-    );
-  }
-  let signature: string;
-  try {
-    signature = await connection.sendRawTransaction(transaction.serialize(), {
-      skipPreflight: false,
-      preflightCommitment: "confirmed",
-      minContextSlot: blockhashContext.slot,
-    });
-  } catch (cause) {
-    debugTransaction(
-      label,
-      "session-signed RPC submission failed",
-      {
-        endpoint,
-        error: cause instanceof Error ? cause.message : String(cause),
-        simulationLogs: simulation.value.logs,
-      },
-      "error",
-    );
-    throw cause;
-  }
-  debugTransaction(label, "transaction submitted", {
-    endpoint,
-    signature,
-    blockhash: latest.blockhash,
-    lastValidBlockHeight: latest.lastValidBlockHeight,
-  });
-  onSubmitted?.(signature);
-  return confirmSubmittedTransaction(
-    connection,
-    signature,
-    latest,
-    label,
-    transaction.serialize(),
-  );
-}
-
-async function ensureErFeePayer(
-  context: LiveWriteContext,
-  signTransaction: SignTransaction,
-  onStatus: (message: string) => void,
-  onSubmitted?: (signature: string) => void,
-  storedFeePayer?: Keypair,
-): Promise<Keypair> {
-  const feePayer = storedFeePayer ?? Keypair.generate();
-  const info = await context.baseConnection.getAccountInfo(feePayer.publicKey, "confirmed");
-  if (info) {
-    if (info?.owner.equals(DELEGATION_PROGRAM_ID)) {
-      await waitForRoute(context.routerEndpoint, feePayer.publicKey, context.erEndpoint);
-      return feePayer;
-    }
-    if (!info.owner.equals(SystemProgram.programId)) {
-      throw new Error("Stored session fee payer has an unexpected base-layer owner");
-    }
-  }
-
-  onStatus("Preparing a fast fee account for this arena…");
-  const fundingShortfall = Math.max(
-    0,
-    ER_FEE_PAYER_LAMPORTS - (info?.lamports ?? 0),
-  );
-  const instructions: TransactionInstruction[] = [];
-  if (fundingShortfall > 0) {
-    instructions.push(
-      SystemProgram.transfer({
-        fromPubkey: context.user,
-        toPubkey: feePayer.publicKey,
-        lamports: fundingShortfall,
-      }),
-    );
-  }
-  instructions.push(
-    SystemProgram.assign({
-      accountPubkey: feePayer.publicKey,
-      programId: DELEGATION_PROGRAM_ID,
-    }),
-    createDelegateInstruction(
-      {
-        payer: context.user,
-        delegatedAccount: feePayer.publicKey,
-        ownerProgram: SystemProgram.programId,
-        validator: context.validator,
-      },
-      { validator: context.validator },
-    ),
-  );
-  await sendAndConfirm(
-    context.baseConnection,
-    context.user,
-    signTransaction,
-    instructions,
-    onSubmitted,
-    {
-      additionalSigners: [feePayer],
-      label: "setup:er-fee-payer",
-    },
-  );
-  await waitForRoute(context.routerEndpoint, feePayer.publicKey, context.erEndpoint);
-  return feePayer;
-}
-
-async function validateSessionFeePayerInContext(
-  context: LiveWriteContext,
-  session: StoredGameSession,
-): Promise<Keypair> {
-  const feePayer = sessionFeePayer(session);
-  const info = await context.baseConnection.getAccountInfo(
-    feePayer.publicKey,
-    "confirmed",
-  );
-  if (!info?.owner.equals(DELEGATION_PROGRAM_ID)) {
-    throw new Error("Session fee payer is not delegated");
-  }
-  await waitForRoute(
-    context.routerEndpoint,
-    feePayer.publicKey,
-    context.erEndpoint,
-  );
-  return feePayer;
 }
 
 async function waitForRoute(
@@ -1156,6 +1168,7 @@ async function loadWriteContext(user: PublicKey): Promise<LiveWriteContext> {
     erConnection,
     routerEndpoint: config.routerEndpoint,
     erEndpoint,
+    sessionSetupLookupTable: config.sessionSetupLookupTable,
     validator: await rpcIdentity(erEndpoint),
     programId: config.programId,
     marketId: config.marketId,
@@ -1169,6 +1182,108 @@ async function loadWriteContext(user: PublicKey): Promise<LiveWriteContext> {
   };
 }
 
+async function latestPreparedBlockhash(
+  connection: Connection,
+): Promise<PreparedBlockhash> {
+  const { context, value } = await connection.getLatestBlockhashAndContext(
+    "processed",
+  );
+  return {
+    blockhash: value.blockhash,
+    lastValidBlockHeight: value.lastValidBlockHeight,
+    minContextSlot: context.slot,
+    updatedAt: Date.now(),
+  };
+}
+
+export async function prepareOpenPosition(
+  user: PublicKey,
+  session: StoredGameSession,
+  snapshot: OpenPositionPreparationInput,
+): Promise<PreparedOpenPositionContext> {
+  if (
+    snapshot.walletAddress !== user.toBase58() ||
+    !snapshot.erEndpoint ||
+    !snapshot.collateralMint ||
+    !snapshot.oracleAddress
+  ) {
+    throw new Error("The live play context is not ready");
+  }
+  if (
+    !session.setupComplete ||
+    session.validUntil <= Math.floor(Date.now() / 1_000)
+  ) {
+    throw new Error("A valid session is required before playing");
+  }
+
+  const config = readClientLiveConfig();
+  if (
+    snapshot.marketId !== config.marketId ||
+    session.programId !== config.programId.toBase58()
+  ) {
+    throw new Error("The session and live Market configuration do not match");
+  }
+
+  const sessionSigner = sessionKeypair(session);
+  const sessionToken = assertStoredSessionIdentity(
+    user,
+    config.programId,
+    session,
+  );
+  const collateralMint = new PublicKey(snapshot.collateralMint);
+  const market = marketPda(config.programId, config.marketId);
+  const userPositions = userPositionsPda(config.programId, user);
+  const derivedFeeAuthority = feeAuthorityPda(config.programId, market);
+  const erConnection = new Connection(snapshot.erEndpoint, "processed");
+
+  return {
+    user,
+    programId: config.programId,
+    marketId: config.marketId,
+    erEndpoint: snapshot.erEndpoint,
+    erConnection,
+    sessionSigner,
+    sessionToken,
+    protocolConfig: protocolConfigPda(config.programId),
+    market,
+    userPositions,
+    poolTokenAccount: getAssociatedTokenAddressSync(
+      collateralMint,
+      market,
+      true,
+    ),
+    derivedFeeAuthority,
+    feeTokenAccount: getAssociatedTokenAddressSync(
+      collateralMint,
+      derivedFeeAuthority,
+      true,
+    ),
+    userTokenAccount: getAssociatedTokenAddressSync(collateralMint, user),
+    payoutEscrowTokenAccount: getAssociatedTokenAddressSync(
+      collateralMint,
+      userPositions,
+      true,
+    ),
+    collateralMint,
+    priceUpdate: new PublicKey(snapshot.oracleAddress),
+    blockhash: await latestPreparedBlockhash(erConnection),
+  };
+}
+
+export async function refreshPreparedOpenPosition(
+  prepared: PreparedOpenPositionContext,
+): Promise<void> {
+  if (prepared.blockhashRefresh) return prepared.blockhashRefresh;
+  prepared.blockhashRefresh = latestPreparedBlockhash(prepared.erConnection)
+    .then((blockhash) => {
+      prepared.blockhash = blockhash;
+    })
+    .finally(() => {
+      prepared.blockhashRefresh = undefined;
+    });
+  return prepared.blockhashRefresh;
+}
+
 export async function validateGameSession(
   user: PublicKey,
   session: StoredGameSession,
@@ -1180,7 +1295,6 @@ export async function validateGameSession(
     context.programId,
     session,
   );
-  await validateSessionFeePayerInContext(context, session);
   const signer = sessionKeypair(session).publicKey;
 
   const userTokenAccount = getAssociatedTokenAddressSync(context.collateralMint, user);
@@ -1232,6 +1346,8 @@ export async function createGameSessionFlow(
   const allowanceMinor = BigInt(Math.round(allowanceUsd * 1_000_000));
   const context = await loadWriteContext(user);
   let session: StoredGameSession;
+  let sessionInstructions: TransactionInstruction[] = [];
+  let sessionSigners: Signer[] = [];
   if (options.existingSession) {
     await validateSessionTokenInContext(
       context.baseConnection,
@@ -1253,10 +1369,6 @@ export async function createGameSessionFlow(
     }
     session = {
       ...options.existingSession,
-      erFeePayerSecret:
-        options.existingSession.erFeePayerSecret.length === 64
-          ? options.existingSession.erFeePayerSecret
-          : Array.from(Keypair.generate().secretKey),
       allowanceMinor: allowanceMinor.toString(),
       setupComplete: false,
     };
@@ -1267,7 +1379,6 @@ export async function createGameSessionFlow(
     });
   } else {
     const signer = Keypair.generate();
-    const feePayer = Keypair.generate();
     const chainSlot = await context.baseConnection.getSlot("confirmed");
     const chainTime = await context.baseConnection.getBlockTime(chainSlot);
     const validUntil = (chainTime ?? Math.floor(Date.now() / 1_000)) + SESSION_DURATION_SECONDS;
@@ -1277,7 +1388,7 @@ export async function createGameSessionFlow(
       context.baseConnection,
     );
 
-    onProgress({ phase: "creating", message: "Creating your one-hour play session…" });
+    onProgress({ phase: "creating", message: "Preparing your one-hour play session…" });
     const createTransaction = await manager.program.methods
       .createSessionV2(false, new BN(validUntil), new BN(0))
       .accounts({
@@ -1287,32 +1398,18 @@ export async function createGameSessionFlow(
         authority: user,
       })
       .transaction();
-    await sendAndConfirm(
-      context.baseConnection,
-      user,
-      signTransaction,
-      createTransaction.instructions,
-      undefined,
-      {
-        additionalSigners: [signer],
-        label: "session:create-token",
-      },
-    );
+    sessionInstructions = createTransaction.instructions;
+    sessionSigners = [signer];
     session = {
       user: user.toBase58(),
       programId: context.programId.toBase58(),
       sessionToken: sessionToken.toBase58(),
       sessionSignerSecret: Array.from(signer.secretKey),
-      erFeePayerSecret: Array.from(feePayer.secretKey),
       allowanceMinor: allowanceMinor.toString(),
       validUntil,
       setupComplete: false,
     };
     options.onSessionAvailable?.(session);
-    onProgress({
-      phase: "preparing-accounts",
-      message: "Session created. Preparing your play accounts…",
-    });
   }
 
   const callbacks: OnboardingCallbacks = {
@@ -1322,23 +1419,37 @@ export async function createGameSessionFlow(
         message,
       });
     },
-    submitted: () => undefined,
   };
-  await ensureUserPositions(context, signTransaction, callbacks);
-  await ensureFallbackBalance(context, signTransaction, callbacks);
-  const collateral = await ensureCollateralBalance(
+  const positions = await planUserPositions(context, callbacks);
+  const fallback = await planFallbackBalance(context, callbacks);
+  const collateral = await planCollateralBalance(
     context,
     allowanceMinor,
-    signTransaction,
     callbacks,
   );
-  const feePayer = await ensureErFeePayer(
+  const baseInstructions = [
+    ...sessionInstructions,
+    ...positions.instructions,
+    ...fallback.instructions,
+    ...collateral.instructions,
+  ];
+  if (baseInstructions.length > 0) {
+    onProgress({
+      phase: "preparing-accounts",
+      message: "Creating the session and preparing your play balance…",
+    });
+  }
+  await sendBaseSetupAndConfirm(
     context,
     signTransaction,
-    (message) => onProgress({ phase: "preparing-fee-payer", message }),
-    undefined,
-    sessionFeePayer(session),
+    baseInstructions,
+    sessionSigners,
   );
+  await Promise.all([
+    positions.finalize(),
+    fallback.finalize(),
+    collateral.finalize(),
+  ]);
   onProgress({
     phase: "approving",
     message: `Approving a ${allowanceUsd.toFixed(2)} USDC session spending limit…`,
@@ -1358,11 +1469,7 @@ export async function createGameSessionFlow(
       ),
     ],
     undefined,
-    {
-      feePayer: feePayer.publicKey,
-      additionalSigners: [feePayer],
-      label: "session:approve-collateral",
-    },
+    { label: "session:approve-collateral" },
   );
 
   const readySession = { ...session, setupComplete: true };
@@ -1388,15 +1495,27 @@ function report(
   onProgress({ phase, message, intent });
 }
 
-async function ensureUserPositions(
+interface BaseSetupPlan {
+  instructions: TransactionInstruction[];
+  finalize(): Promise<void>;
+}
+
+interface TokenSetupPlan extends BaseSetupPlan {
+  eata: PublicKey;
+  ata: PublicKey;
+}
+
+async function planUserPositions(
   context: LiveWriteContext,
-  signTransaction: SignTransaction,
   callbacks: OnboardingCallbacks,
-): Promise<void> {
+): Promise<BaseSetupPlan> {
   const info = await context.baseConnection.getAccountInfo(context.userPositions, "confirmed");
   if (info?.owner.equals(DELEGATION_PROGRAM_ID)) {
-    await waitForRoute(context.routerEndpoint, context.userPositions, context.erEndpoint);
-    return;
+    return {
+      instructions: [],
+      finalize: () =>
+        waitForRoute(context.routerEndpoint, context.userPositions, context.erEndpoint),
+    };
   }
   if (info && !info.owner.equals(context.programId)) {
     throw new Error("UserPositions has an unexpected base-layer owner");
@@ -1411,22 +1530,17 @@ async function ensureUserPositions(
         initializeUserPositionsInstruction(context.programId, context.user, context.userPositions),
         delegateUserPositionsInstruction(context.programId, context.user, context.userPositions, context.validator),
       ];
-  await sendAndConfirm(
-    context.baseConnection,
-    context.user,
-    signTransaction,
+  return {
     instructions,
-    callbacks.submitted,
-    { label: "setup:user-positions" },
-  );
-  await waitForRoute(context.routerEndpoint, context.userPositions, context.erEndpoint);
+    finalize: () =>
+      waitForRoute(context.routerEndpoint, context.userPositions, context.erEndpoint),
+  };
 }
 
-async function ensureFallbackBalance(
+async function planFallbackBalance(
   context: LiveWriteContext,
-  signTransaction: SignTransaction,
   callbacks: OnboardingCallbacks,
-): Promise<{ eata: PublicKey; ata: PublicKey }> {
+): Promise<TokenSetupPlan> {
   const [eata] = deriveEphemeralAta(context.userPositions, context.collateralMint);
   const ata = getAssociatedTokenAddressSync(
     context.collateralMint,
@@ -1464,36 +1578,34 @@ async function ensureFallbackBalance(
   } else if (!info.owner.equals(DELEGATION_PROGRAM_ID)) {
     throw new Error("Fallback eSPL balance has an unexpected owner");
   }
-  if (instructions.length > 0) {
-    await sendAndConfirm(
-      context.baseConnection,
-      context.user,
-      signTransaction,
-      instructions,
-      callbacks.submitted,
-      { label: "setup:fallback-payout" },
-    );
-  }
-  await waitForTokenRoute(
-    context.routerEndpoint,
+  return {
     eata,
     ata,
-    context.erEndpoint,
-  );
-  await waitForTokenAmount(context.erConnection, ata, 0n);
-  const account = await getAccount(context.erConnection, ata, "confirmed");
-  if (!account.owner.equals(context.userPositions) || !account.mint.equals(context.collateralMint)) {
-    throw new Error("Fallback payout ATA owner or mint mismatch on the ER");
-  }
-  return { eata, ata };
+    instructions,
+    finalize: async () => {
+      await waitForTokenRoute(
+        context.routerEndpoint,
+        eata,
+        ata,
+        context.erEndpoint,
+      );
+      await waitForTokenAmount(context.erConnection, ata, 0n);
+      const account = await getAccount(context.erConnection, ata, "confirmed");
+      if (
+        !account.owner.equals(context.userPositions) ||
+        !account.mint.equals(context.collateralMint)
+      ) {
+        throw new Error("Fallback payout ATA owner or mint mismatch on the ER");
+      }
+    },
+  };
 }
 
-async function ensureCollateralBalance(
+async function planCollateralBalance(
   context: LiveWriteContext,
   amount: bigint,
-  signTransaction: SignTransaction,
   callbacks: OnboardingCallbacks,
-): Promise<{ eata: PublicKey; ata: PublicKey }> {
+): Promise<TokenSetupPlan> {
   const [eata] = deriveEphemeralAta(context.user, context.collateralMint);
   const ata = getAssociatedTokenAddressSync(context.collateralMint, context.user);
   const routed = await getTokenRoute(
@@ -1510,7 +1622,22 @@ async function ensureCollateralBalance(
     }
     erAmount = (await getAccount(context.erConnection, ata, "confirmed").catch(() => null))?.amount ?? 0n;
   }
-  if (erAmount >= amount) return { eata, ata };
+  if (erAmount >= amount) {
+    return {
+      eata,
+      ata,
+      instructions: [],
+      finalize: async () => {
+        await waitForTokenRoute(
+          context.routerEndpoint,
+          eata,
+          ata,
+          context.erEndpoint,
+        );
+        await waitForTokenAmount(context.erConnection, ata, amount);
+      },
+    };
+  }
 
   const shortfall = amount - erAmount;
   const baseToken = await getAccount(context.baseConnection, ata, "confirmed").catch(() => null);
@@ -1583,33 +1710,20 @@ async function ensureCollateralBalance(
     );
   }
 
-  await sendAndConfirm(
-    context.baseConnection,
-    context.user,
-    signTransaction,
-    instructions,
-    callbacks.submitted,
-    { label: "setup:collateral" },
-  );
-  await waitForTokenRoute(
-    context.routerEndpoint,
+  return {
     eata,
     ata,
-    context.erEndpoint,
-  );
-  await waitForTokenAmount(context.erConnection, ata, amount);
-  return { eata, ata };
-}
-
-async function assertRouteSet(
-  context: LiveWriteContext,
-  accounts: PublicKey[],
-): Promise<void> {
-  await Promise.all(
-    accounts.map((account) =>
-      waitForRoute(context.routerEndpoint, account, context.erEndpoint),
-    ),
-  );
+    instructions,
+    finalize: async () => {
+      await waitForTokenRoute(
+        context.routerEndpoint,
+        eata,
+        ata,
+        context.erEndpoint,
+      );
+      await waitForTokenAmount(context.erConnection, ata, amount);
+    },
+  };
 }
 
 async function positionMatchesIntent(
@@ -1626,18 +1740,6 @@ async function positionMatchesIntent(
       position.nonce === intent.nonce &&
       sameBytes(position.taskSalt, salt),
   );
-}
-
-async function waitForPositionMatch(
-  context: LiveWriteContext,
-  intent: OpenPositionIntent,
-): Promise<boolean> {
-  const deadline = Date.now() + 5_000;
-  while (Date.now() < deadline) {
-    if (await positionMatchesIntent(context, intent)) return true;
-    await sleep(200);
-  }
-  return false;
 }
 
 export async function recoverOpenPositionIntent(
@@ -1701,251 +1803,131 @@ export async function openPositionFlow(
   direction: Direction,
   amountUsd: number,
   session: StoredGameSession,
+  prepared: PreparedOpenPositionContext,
+  quote: {
+    rawPrice: string;
+    nextPositionNonce: number;
+  },
   onProgress: ProgressHandler,
 ): Promise<OpenFlowResult> {
+  const clickStartedAt = globalThis.performance?.now() ?? Date.now();
   if (!Number.isFinite(amountUsd) || amountUsd < 1 || amountUsd > 1_000) {
     throw new Error("Play amount must be between 1 and 1,000 USDC");
   }
   const collateral = BigInt(Math.round(amountUsd * 1_000_000));
   if (collateral > MAX_POSITION_MINOR) throw new Error("Play amount exceeds the contract maximum");
-  const sessionSigner = sessionKeypair(session);
   if (
     session.user !== user.toBase58() ||
     !session.setupComplete ||
-    session.validUntil <= Math.floor(Date.now() / 1_000)
+    session.validUntil <= Math.floor(Date.now() / 1_000) ||
+    !prepared.user.equals(user) ||
+    prepared.marketId < 0 ||
+    session.programId !== prepared.programId.toBase58() ||
+    !prepared.sessionSigner.publicKey.equals(sessionKeypair(session).publicKey)
   ) {
     throw new Error("A valid session is required before playing");
   }
-  const config = readClientLiveConfig();
-  const existing = loadOpenIntent(user.toBase58(), config.marketId);
+  if (
+    !Number.isInteger(quote.nextPositionNonce) ||
+    quote.nextPositionNonce < 0 ||
+    quote.nextPositionNonce > 0xffff_ffff ||
+    !/^[1-9][0-9]*$/.test(quote.rawPrice)
+  ) {
+    throw new Error("The live Market quote is not ready");
+  }
+
+  const existing = loadOpenIntent(user.toBase58(), prepared.marketId);
   if (existing && requiresIntentRecovery(existing)) {
-    report(onProgress, existing, "recovering", "Checking the previous play before sending anything…");
-    const recovered = await recoverOpenPositionIntent(user, existing);
-    if (recovered.accepted || recovered.intent.status === "ambiguous") return recovered;
-    clearOpenIntent(user.toBase58(), config.marketId);
+    throw new Error("Check the previous play before sending another one");
   }
 
   let intent = createOpenIntent(
     user.toBase58(),
-    config.marketId,
+    prepared.marketId,
     direction,
     collateral,
     randomTaskSalt(),
   );
   intent = saveOpenIntent(intent);
-  report(onProgress, intent, "checking", "Checking the arena and your account setup…");
-  const context = await loadWriteContext(user);
-  if (context.marketId !== intent.marketId) throw new Error("Intent Market ID changed during setup");
-  if (session.programId !== context.programId.toBase58()) {
-    throw new Error("Session targets a different program");
-  }
-
   try {
-    const [collateralEata] = deriveEphemeralAta(
-      context.user,
-      context.collateralMint,
-    );
-    const collateralBalance = {
-      eata: collateralEata,
-      ata: getAssociatedTokenAddressSync(
-        context.collateralMint,
-        context.user,
-      ),
-    };
-    const [fallbackEata] = deriveEphemeralAta(
-      context.userPositions,
-      context.collateralMint,
-    );
-    const fallback = {
-      eata: fallbackEata,
-      ata: getAssociatedTokenAddressSync(
-        context.collateralMint,
-        context.userPositions,
-        true,
-      ),
-    };
-    const feePayer = await validateSessionFeePayerInContext(context, session);
-
-    report(onProgress, intent, "verifying-route", "Verifying every play account is in the same arena…");
-    const poolTokenAccount = getAssociatedTokenAddressSync(context.collateralMint, context.market, true);
-    const feeTokenAccount = getAssociatedTokenAddressSync(context.collateralMint, context.feeAuthority, true);
-    const [poolEphemeralTokenAccount] = deriveEphemeralAta(
-      context.market,
-      context.collateralMint,
-    );
-    const [feeEphemeralTokenAccount] = deriveEphemeralAta(
-      context.feeAuthority,
-      context.collateralMint,
-    );
-    await Promise.all([
-      assertRouteSet(context, [
-        context.market,
-        context.userPositions,
-      ]),
-      waitForTokenRoute(
-        context.routerEndpoint,
-        collateralBalance.eata,
-        collateralBalance.ata,
-        context.erEndpoint,
-      ),
-      waitForTokenRoute(
-        context.routerEndpoint,
-        fallback.eata,
-        fallback.ata,
-        context.erEndpoint,
-      ),
-      waitForTokenRoute(
-        context.routerEndpoint,
-        poolEphemeralTokenAccount,
-        poolTokenAccount,
-        context.erEndpoint,
-      ),
-      waitForTokenRoute(
-        context.routerEndpoint,
-        feeEphemeralTokenAccount,
-        feeTokenAccount,
-        context.erEndpoint,
-      ),
-    ]);
-
-    const marketInfo = await context.erConnection.getAccountInfo(context.market, "confirmed");
-    if (!marketInfo || !marketInfo.owner.equals(context.programId)) throw new Error("Market disappeared from the ER");
-    const market = decodeMarket(Buffer.from(marketInfo.data));
-    if (market.mode !== "open") throw new Error("The Market is close-only");
-    if (market.activePositions >= 8) throw new Error("The Market is at its eight-position risk limit");
-    const positionsInfo = await context.erConnection.getAccountInfo(context.userPositions, "confirmed");
-    if (!positionsInfo || decodeUserPositions(Buffer.from(positionsInfo.data)).length >= 8) {
-      throw new Error("Your eight play slots are full");
-    }
-    // Pricing feeds are shared, unpinned clones. Validate the feed on the Market ER
-    // instead of asking the router to resolve its sentinel validator as one region.
-    const oracleInfo = await context.erConnection.getAccountInfo(context.oracle, "confirmed");
-    if (!oracleInfo || !oracleInfo.owner.equals(ORACLE_PROGRAM_ID)) {
-      throw new Error("The configured oracle is unavailable on the ER");
-    }
-    const price = decodeOraclePrice(
-      Buffer.from(oracleInfo.data),
-      market.oracleFeedId,
-      Math.floor(Date.now() / 1_000),
-    );
-
-    const [pool, fee, userToken, payout] = await Promise.all([
-      getAccount(context.erConnection, poolTokenAccount, "confirmed"),
-      getAccount(context.erConnection, feeTokenAccount, "confirmed"),
-      getAccount(context.erConnection, collateralBalance.ata, "confirmed"),
-      getAccount(context.erConnection, fallback.ata, "confirmed"),
-    ]);
-    const expectedOwners = [context.market, context.feeAuthority, context.user, context.userPositions];
-    for (const [index, token] of [pool, fee, userToken, payout].entries()) {
-      if (!token.mint.equals(context.collateralMint) || !token.owner.equals(expectedOwners[index])) {
-        throw new Error("An ER token account failed its canonical mint/owner check");
-      }
-    }
-    if (
-      !userToken.delegate?.equals(sessionSigner.publicKey) ||
-      userToken.delegatedAmount < collateral
-    ) {
-      throw new Error("Session spending allowance is exhausted or no longer active");
-    }
-
+    const rawPrice = BigInt(quote.rawPrice);
     const taskSalt = hexToBytes(intent.taskSaltHex);
-    const hydraCrank = await deriveHydraCrank(context.market, context.user, market.nextPositionNonce, taskSalt);
-    const slippage = price.rawPrice / 2_000n > 0n ? price.rawPrice / 2_000n : 1n;
+    const slippage = rawPrice / 2_000n > 0n ? rawPrice / 2_000n : 1n;
     intent = updateIntent(intent, {
-      status: "ready",
-      nonce: market.nextPositionNonce,
-      erEndpoint: context.erEndpoint,
+      status: "submitting",
+      nonce: quote.nextPositionNonce,
+      erEndpoint: prepared.erEndpoint,
+      message: "Signing with your active session",
     });
     const instruction = openPositionInstruction(
-      context.programId,
+      prepared.programId,
       {
-        user: context.user,
-        sessionSigner: sessionSigner.publicKey,
-        sessionToken: new PublicKey(session.sessionToken),
-        taskPayer: feePayer.publicKey,
-        protocolConfig: context.protocolConfig,
-        market: context.market,
-        userPositions: context.userPositions,
-        poolTokenAccount,
-        derivedFeeAuthority: context.feeAuthority,
-        feeTokenAccount,
-        userTokenAccount: collateralBalance.ata,
-        payoutEscrowTokenAccount: fallback.ata,
-        collateralMint: context.collateralMint,
-        priceUpdate: context.oracle,
-        hydraCrank,
+        user: prepared.user,
+        sessionSigner: prepared.sessionSigner.publicKey,
+        sessionToken: prepared.sessionToken,
+        protocolConfig: prepared.protocolConfig,
+        market: prepared.market,
+        userPositions: prepared.userPositions,
+        poolTokenAccount: prepared.poolTokenAccount,
+        derivedFeeAuthority: prepared.derivedFeeAuthority,
+        feeTokenAccount: prepared.feeTokenAccount,
+        userTokenAccount: prepared.userTokenAccount,
+        payoutEscrowTokenAccount: prepared.payoutEscrowTokenAccount,
+        collateralMint: prepared.collateralMint,
+        priceUpdate: prepared.priceUpdate,
       },
       {
-        nonce: market.nextPositionNonce,
+        nonce: quote.nextPositionNonce,
         taskSalt,
         direction,
         collateral,
-        minEntryPrice: price.rawPrice - slippage,
-        maxEntryPrice: price.rawPrice + slippage,
+        minEntryPrice: rawPrice - slippage,
+        maxEntryPrice: rawPrice + slippage,
       },
     );
 
-    intent = updateIntent(intent, { status: "submitting", message: "Signing with your active session" });
     report(onProgress, intent, "submitting", `Playing ${direction === "up" ? "Up" : "Down"} with your active session…`);
-    let signature: string;
-    try {
-      signature = await sendWithKeypairsAndConfirm(
-        context.erConnection,
-        feePayer,
-        [instruction],
-        [sessionSigner],
-        (submittedSignature) => {
-          intent = updateIntent(intent, {
-            status: "confirming",
-            erSignature: submittedSignature,
-          });
-          report(onProgress, intent, "confirming", "Play sent. Confirming it in Your Plays…");
-        },
-        "play:open-position",
-      );
-    } catch (cause) {
-      const message = cause instanceof Error ? cause.message : "ER submission result is unknown";
-      if (!intent.erSignature) {
-        intent = updateIntent(intent, { status: "failed", message });
-        throw cause;
-      }
-      intent = updateIntent(intent, {
-        status: "ambiguous",
-        message,
-      });
-      return recoverOpenPositionIntent(user, intent);
-    }
-    if (intent.erSignature !== signature) {
-      intent = updateIntent(intent, { status: "confirming", erSignature: signature });
-    }
-    if (!(await waitForPositionMatch(context, intent))) {
-      intent = updateIntent(intent, {
-        status: "ambiguous",
-        message: "The signature confirmed but the position is not visible yet",
-      });
-      return { intent, accepted: false };
-    }
-    intent = updateIntent(intent, { status: "accepted", message: "Play accepted" });
-    report(onProgress, intent, "accepted", "Play accepted · settlement is automatic");
+
+    const transaction = new Transaction({
+      feePayer: prepared.sessionSigner.publicKey,
+      blockhash: prepared.blockhash.blockhash,
+      lastValidBlockHeight: prepared.blockhash.lastValidBlockHeight,
+    }).add(instruction);
+    transaction.sign(prepared.sessionSigner);
+    const rawTransaction = transaction.serialize();
+    debugTransaction("play:open-position", "submitting prepared transaction", {
+      endpoint: safeRpcEndpoint(prepared.erConnection.rpcEndpoint),
+      feePayer: prepared.sessionSigner.publicKey.toBase58(),
+      blockhash: prepared.blockhash.blockhash,
+      blockhashAgeMs: Date.now() - prepared.blockhash.updatedAt,
+      minContextSlot: prepared.blockhash.minContextSlot,
+      instructions: instructionSummary([instruction]),
+    });
+    const signature = await prepared.erConnection.sendRawTransaction(
+      rawTransaction,
+      {
+        skipPreflight: true,
+        maxRetries: 0,
+        minContextSlot: prepared.blockhash.minContextSlot,
+      },
+    );
+    const clickToSignatureMs = (globalThis.performance?.now() ?? Date.now()) - clickStartedAt;
+    intent = updateIntent(intent, {
+      status: "confirming",
+      erSignature: signature,
+      message: "Play sent · waiting for the position stream",
+    });
+    debugTransaction("play:open-position", "transaction submitted", {
+      endpoint: safeRpcEndpoint(prepared.erConnection.rpcEndpoint),
+      signature,
+      clickToSignatureMs: Math.round(clickToSignatureMs * 10) / 10,
+      latencyTargetMs: 200,
+    }, clickToSignatureMs <= 200 ? "info" : "warn");
+    report(onProgress, intent, "confirming", "Play sent · waiting for Your Plays…");
     return { intent, accepted: true };
   } catch (cause) {
-    const message = cause instanceof Error ? cause.message : "Play setup failed";
-    if (/reject|declin|cancel/i.test(message)) {
-      updateIntent(intent, { status: "failed", message });
-      throw cause;
-    }
-    if (requiresIntentRecovery(intent)) throw cause;
-    if (intent.status === "onboarding" && intent.baseSignatures.length > 0) {
-      updateIntent(intent, {
-        status: "ambiguous",
-        message,
-      });
-      throw cause;
-    }
-    updateIntent(intent, {
-      status: "failed",
-      message,
-    });
+    const message = cause instanceof Error ? cause.message : "ER submission result is unknown";
+    updateIntent(intent, { status: "ambiguous", message });
     throw cause;
   }
 }

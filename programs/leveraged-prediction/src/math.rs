@@ -2,6 +2,7 @@ use anchor_lang::prelude::*;
 
 use crate::error::ErrorCode;
 use crate::state::Direction;
+use crate::MAX_GROSS_PROFIT_MULTIPLIER;
 
 pub const BPS: u128 = 10_000;
 
@@ -124,8 +125,11 @@ pub fn require_post_open_solvency(
         .checked_mul(u128::from(safety_buffer_bps))
         .and_then(|value| value.checked_div(BPS))
         .ok_or(ErrorCode::MathOverflow)?;
+    let profit_reserve = u128::from(open_collateral_after)
+        .checked_mul(u128::from(MAX_GROSS_PROFIT_MULTIPLIER))
+        .ok_or(ErrorCode::MathOverflow)?;
     let required = u128::from(existing_open_collateral)
-        .checked_add(u128::from(open_collateral_after))
+        .checked_add(profit_reserve)
         .and_then(|value| value.checked_add(safety))
         .ok_or(ErrorCode::MathOverflow)?;
     require!(
@@ -179,8 +183,11 @@ pub fn calculate_settlement(
         .ok_or(ErrorCode::MathOverflow)?;
 
     if raw >= 0 {
-        let gross_profit =
-            u64::try_from(raw.min(i128::from(collateral))).map_err(|_| ErrorCode::MathOverflow)?;
+        let maximum_gross_profit = collateral
+            .checked_mul(u64::from(MAX_GROSS_PROFIT_MULTIPLIER))
+            .ok_or(ErrorCode::MathOverflow)?;
+        let gross_profit = u64::try_from(raw.min(i128::from(maximum_gross_profit)))
+            .map_err(|_| ErrorCode::MathOverflow)?;
         let fee = u128::from(gross_profit)
             .checked_mul(u128::from(profit_fee_bps))
             .and_then(|value| value.checked_div(BPS))
@@ -241,6 +248,17 @@ mod tests {
     }
 
     #[test]
+    fn favorable_pnl_caps_at_five_times_collateral_before_fee() {
+        let win =
+            calculate_settlement(1_000_000, 100_000, 101_000, Direction::Up, 1000, 1000, 2000)
+                .unwrap();
+        assert_eq!(win.gross_profit, 5_000_000);
+        assert_eq!(win.user_payout, 5_500_000);
+        assert_eq!(win.protocol_fee, 100_000);
+        assert_eq!(win.lp_fee, 400_000);
+    }
+
+    #[test]
     fn signed_non_divisible_pnl_truncates_toward_zero() {
         let positive = calculate_settlement(
             1_000_001,
@@ -271,7 +289,7 @@ mod tests {
     }
 
     #[test]
-    fn equal_long_short_cannot_extract_value() {
+    fn combined_directional_payout_stays_within_the_five_times_profit_cap() {
         for settle in 90_000..=110_000 {
             let up =
                 calculate_settlement(1_000_000, 100_000, settle, Direction::Up, 1000, 1000, 2000)
@@ -286,7 +304,7 @@ mod tests {
                 2000,
             )
             .unwrap();
-            assert!(up.user_payout + down.user_payout <= 2_000_000);
+            assert!(up.user_payout + down.user_payout <= 5_500_000);
         }
     }
 
@@ -351,14 +369,14 @@ mod tests {
 
     #[test]
     fn post_open_solvency_uses_current_equity_after_rolling_losses() {
-        assert!(require_post_open_solvency(100, 40, 50, 1_000).is_ok());
-        assert!(require_post_open_solvency(90, 40, 50, 1_000).is_err());
+        assert!(require_post_open_solvency(330, 40, 50, 1_000).is_ok());
+        assert!(require_post_open_solvency(320, 40, 50, 1_000).is_err());
     }
 
     #[test]
     fn post_open_solvency_includes_existing_risk_and_safety() {
-        assert!(require_post_open_solvency(100, 40, 50, 1_000).is_ok());
-        assert!(require_post_open_solvency(99, 41, 50, 1_000).is_err());
+        assert!(require_post_open_solvency(330, 40, 50, 1_000).is_ok());
+        assert!(require_post_open_solvency(322, 41, 50, 1_000).is_err());
     }
 
     #[test]
