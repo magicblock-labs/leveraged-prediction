@@ -1,8 +1,8 @@
 import type { Play, PricePoint } from "@/app/lib/domain";
 
-export const CHART_WINDOW_MS = 40_000;
-export const CHART_PAST_MS = CHART_WINDOW_MS / 2;
-export const CHART_FUTURE_MS = CHART_WINDOW_MS / 2;
+export const CHART_PAST_MS = 30_000;
+export const CHART_FUTURE_MS = 15_000;
+export const CHART_WINDOW_MS = CHART_PAST_MS + CHART_FUTURE_MS;
 export const CHART_AXIS_WIDTH = 72;
 export const CHART_RIGHT_PADDING = 20;
 
@@ -70,7 +70,7 @@ export function createChartGeometry(
   const focusPrice = (high + low) / 2;
   const dollarsPerPixel = range / plotHeight;
   const millisecondsPerPixel = CHART_WINDOW_MS / plotWidth;
-  const centerX = plotLeft + plotWidth / 2;
+  const liveX = plotLeft + CHART_PAST_MS / millisecondsPerPixel;
   const centerY = plotTop + plotHeight / 2;
 
   return {
@@ -84,13 +84,13 @@ export function createChartGeometry(
     dollarsPerPixel,
     millisecondsPerPixel,
     x: (timestamp, viewport = { x: 0, y: 0 }) =>
-      centerX + (timestamp - now) / millisecondsPerPixel - viewport.x,
+      liveX + (timestamp - now) / millisecondsPerPixel - viewport.x,
     y: (price, viewport = { x: 0, y: 0 }) =>
       centerY - (price - focusPrice) / dollarsPerPixel - viewport.y,
     priceAt: (screenY, viewport = { x: 0, y: 0 }) =>
       focusPrice - (screenY + viewport.y - centerY) * dollarsPerPixel,
     timeOffsetAt: (screenX, viewport = { x: 0, y: 0 }) =>
-      (screenX + viewport.x - centerX) * millisecondsPerPixel,
+      (screenX + viewport.x - liveX) * millisecondsPerPixel,
   };
 }
 

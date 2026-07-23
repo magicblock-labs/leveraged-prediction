@@ -4,7 +4,9 @@ import type { MarketSnapshot } from "@/app/lib/domain";
 import { ORACLE_PROGRAM_ID } from "@/app/lib/live/config";
 import { accountDiscriminator } from "@/app/lib/live/decode";
 import {
+  appendOraclePrice,
   applyOracleStreamUpdate,
+  mergeOraclePriceHistory,
   subscribeOraclePrice,
   type OracleStreamConnection,
 } from "@/app/lib/live/oracle-stream";
@@ -163,5 +165,37 @@ describe("routed ER oracle websocket", () => {
     expect(next.plays[0].liveProfitUsd).toBe(45);
     expect(next.feedHealth).toBe("live");
     expect(next.notice).toMatch(/websocket connected/);
+  });
+
+  it("retains forty-five seconds of a high-frequency price stream", () => {
+    const startedAt = 1_000_000;
+    let history: MarketSnapshot["priceHistory"] = [];
+    for (let index = 0; index <= 1_000; index += 1) {
+      history = appendOraclePrice(history, {
+        displayPrice: 100 + index / 10_000,
+        receivedAt: startedAt + index * 50,
+      });
+    }
+
+    expect(history.length).toBeGreaterThan(400);
+    expect(history.length).toBeLessThanOrEqual(452);
+    expect(history.at(-1)?.timestamp).toBe(startedAt + 50_000);
+    expect(
+      history.at(-1)!.timestamp - history[0].timestamp,
+    ).toBeGreaterThanOrEqual(44_900);
+  });
+
+  it("merges sparse snapshot samples without replacing browser history", () => {
+    const current = [
+      { price: 100, timestamp: 100_000 },
+      { price: 101, timestamp: 110_000 },
+      { price: 102, timestamp: 120_000 },
+    ];
+    const incoming = [{ price: 103, timestamp: 130_000 }];
+
+    expect(mergeOraclePriceHistory(current, incoming, 130_000)).toEqual([
+      ...current,
+      ...incoming,
+    ]);
   });
 });

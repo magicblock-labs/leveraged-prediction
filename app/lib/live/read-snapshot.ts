@@ -15,6 +15,7 @@ import {
   decodeOraclePrice,
   ORACLE_EXPONENT,
 } from "@/app/lib/live/oracle";
+import { mergeOraclePriceHistory } from "@/app/lib/live/oracle-stream";
 import {
   marketPda,
   protocolConfigPda,
@@ -31,9 +32,11 @@ const historyByOracle = new Map<string, PricePoint[]>();
 
 function updateHistory(oracle: string, price: number, now: number): PricePoint[] {
   const current = historyByOracle.get(oracle) ?? [];
-  const next = [...current, { price, timestamp: now }]
-    .filter((point) => point.timestamp >= now - 45_000)
-    .slice(-120);
+  const next = mergeOraclePriceHistory(
+    current,
+    [{ price, timestamp: now }],
+    now,
+  );
   historyByOracle.set(oracle, next);
   return next;
 }
