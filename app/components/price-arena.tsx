@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { MarketSnapshot, Play, PricePoint } from "@/app/lib/domain";
+import type { MarketSnapshot, Play } from "@/app/lib/domain";
 import {
   createChartGeometry,
   nicePriceStep,
@@ -14,48 +14,43 @@ interface PriceArenaProps {
   now: number;
 }
 
-interface Candle {
-  timestamp: number;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-}
-
-interface TrailPoint {
-  price: number;
-  timestamp: number;
-  rising: boolean;
-}
-
 interface AxisLabel {
   key: string;
   value: string;
   position: number;
 }
 
-const TRAIL_DURATION_MS = 3_000;
-const MAX_TRAIL_POINTS = 100;
+interface ChartTheme {
+  ink: number;
+  mut: number;
+  hair: number;
+  up: number;
+  down: number;
+  wait: number;
+}
+
 const TIME_TICK_OFFSETS = [-20_000, -10_000, 0, 10_000, 20_000];
 
-function candlesFrom(points: PricePoint[]): Candle[] {
-  const buckets = new Map<number, PricePoint[]>();
-  for (const point of points) {
-    const key = Math.floor(point.timestamp / 2_000) * 2_000;
-    buckets.set(key, [...(buckets.get(key) ?? []), point]);
-  }
-  return [...buckets.entries()].map(([timestamp, bucket]) => ({
-    timestamp,
-    open: bucket[0].price,
-    high: Math.max(...bucket.map((point) => point.price)),
-    low: Math.min(...bucket.map((point) => point.price)),
-    close: bucket[bucket.length - 1].price,
-  }));
+function cssColor(styles: CSSStyleDeclaration, name: string): number {
+  const value = styles.getPropertyValue(name).trim();
+  return value.startsWith("#") ? Number.parseInt(value.slice(1), 16) : 0x000000;
+}
+
+function readTheme(): ChartTheme {
+  const styles = getComputedStyle(document.documentElement);
+  return {
+    ink: cssColor(styles, "--ink"),
+    mut: cssColor(styles, "--mut"),
+    hair: cssColor(styles, "--hair"),
+    up: cssColor(styles, "--up"),
+    down: cssColor(styles, "--down"),
+    wait: cssColor(styles, "--wait"),
+  };
 }
 
 function formatTimeOffset(milliseconds: number): string {
   const seconds = Math.round(milliseconds / 1_000);
-  if (seconds === 0) return "NOW";
+  if (seconds === 0) return "now";
   return `${seconds > 0 ? "+" : "−"}${Math.abs(seconds)}s`;
 }
 
@@ -65,7 +60,7 @@ export function PriceArena({ snapshot, plays, now }: PriceArenaProps) {
   const dataRef = useRef({ snapshot, plays, now });
   const [following, setFollowing] = useState(true);
   const [priceLabels, setPriceLabels] = useState<AxisLabel[]>([]);
-  const [timeLabels, setTimeLabels] = useState(["−20s", "−10s", "NOW", "+10s", "+20s"]);
+  const [timeLabels, setTimeLabels] = useState(["−20s", "−10s", "now", "+10s", "+20s"]);
   const followingRef = useRef(true);
   const viewportRef = useRef<ChartViewport>({ x: 0, y: 0 });
 
@@ -107,11 +102,10 @@ export function PriceArena({ snapshot, plays, now }: PriceArenaProps) {
       let dragStart = { x: 0, y: 0 };
       let dragStartView: ChartViewport = { x: 0, y: 0 };
       let displayPrice = dataRef.current.snapshot.currentPrice;
-      let previousDisplayPrice = displayPrice;
       let lastFrameAt = performance.now();
-      let lastTrailAt = 0;
       let lastAxisAt = 0;
-      const trail: TrailPoint[] = [];
+      let lastThemeAt = 0;
+      let theme = readTheme();
 
       const onPointerDown = (event: PointerEvent) => {
         dragging = true;
@@ -145,6 +139,10 @@ export function PriceArena({ snapshot, plays, now }: PriceArenaProps) {
         const width = app.screen.width;
         const height = app.screen.height;
         if (width < 20 || height < 20) return;
+        if (frameAt - lastThemeAt >= 500) {
+          theme = readTheme();
+          lastThemeAt = frameAt;
+        }
         const smoothing = 1 - Math.exp(-deltaMs / 150);
         displayPrice += (current.currentPrice - displayPrice) * smoothing;
         if (followingRef.current && !dragging) {
@@ -161,35 +159,19 @@ export function PriceArena({ snapshot, plays, now }: PriceArenaProps) {
           wallNow,
         );
 
-        if (frameAt - lastTrailAt >= 50) {
-          trail.push({
-            price: displayPrice,
-            timestamp: wallNow,
-            rising: displayPrice >= previousDisplayPrice,
-          });
-          if (trail.length > MAX_TRAIL_POINTS) trail.shift();
-          lastTrailAt = frameAt;
-          previousDisplayPrice = displayPrice;
-        }
-
         graphics.clear();
-        graphics.rect(0, 0, width, height).fill({ color: 0x07111f, alpha: 1 });
-        graphics.circle(width * 0.2, height * 0.15, width * 0.36).fill({ color: 0x263f86, alpha: 0.08 });
-        graphics.circle(width * 0.72, height * 0.64, width * 0.28).fill({ color: 0x0bd8c0, alpha: 0.035 });
-        graphics.rect(0, geometry.plotTop, geometry.plotLeft, geometry.plotHeight).fill({ color: 0x07101d, alpha: 0.9 });
-        graphics.moveTo(geometry.plotLeft, geometry.plotTop)
-          .lineTo(geometry.plotLeft, geometry.plotBottom)
-          .stroke({ color: 0x476783, alpha: 0.42, width: 1 });
 
+        // time gridlines
         const timeTickXs = TIME_TICK_OFFSETS.map((offset) =>
           geometry.plotLeft + ((offset + 20_000) / 40_000) * geometry.plotWidth
         );
         for (const tickX of timeTickXs) {
           graphics.moveTo(tickX, geometry.plotTop)
             .lineTo(tickX, geometry.plotBottom)
-            .stroke({ color: 0x33506e, alpha: 0.26, width: 1 });
+            .stroke({ color: theme.hair, alpha: 0.7, width: 1 });
         }
 
+        // price gridlines + axis labels
         const priceStep = nicePriceStep(geometry.dollarsPerPixel);
         const topPrice = geometry.priceAt(geometry.plotTop, view);
         const bottomPrice = geometry.priceAt(geometry.plotBottom, view);
@@ -204,7 +186,7 @@ export function PriceArena({ snapshot, plays, now }: PriceArenaProps) {
           if (gridY < geometry.plotTop - 1 || gridY > geometry.plotBottom + 1) continue;
           graphics.moveTo(geometry.plotLeft, gridY)
             .lineTo(geometry.plotRight, gridY)
-            .stroke({ color: 0x33506e, alpha: 0.24, width: 1 });
+            .stroke({ color: theme.hair, alpha: 0.7, width: 1 });
           nextPriceLabels.push({
             key: price.toFixed(8),
             value: `$${price.toLocaleString(undefined, {
@@ -215,74 +197,50 @@ export function PriceArena({ snapshot, plays, now }: PriceArenaProps) {
           });
         }
 
-        for (const candle of candlesFrom(current.priceHistory)) {
-          const candleX = geometry.x(candle.timestamp + 1_000, view);
-          if (candleX < geometry.plotLeft - 10 || candleX > geometry.plotRight + 10) continue;
-          const up = candle.close >= candle.open;
-          const color = up ? 0x28e7a7 : 0xff5b70;
-          graphics.moveTo(candleX, geometry.y(candle.high, view))
-            .lineTo(candleX, geometry.y(candle.low, view))
-            .stroke({ color, alpha: 0.55, width: 1 });
-          const openY = geometry.y(candle.open, view);
-          const closeY = geometry.y(candle.close, view);
-          graphics.roundRect(
-            candleX - 3,
-            Math.min(openY, closeY),
-            6,
-            Math.max(Math.abs(openY - closeY), 2),
-            1,
-          ).fill({ color, alpha: 0.72 });
+        // price path (monochrome ink; color is reserved for positions)
+        const path: { x: number; y: number }[] = [];
+        for (const point of current.priceHistory) {
+          const pointX = geometry.x(point.timestamp, view);
+          if (pointX < geometry.plotLeft - 10 || pointX > geometry.plotRight + 10) continue;
+          path.push({ x: pointX, y: geometry.y(point.price, view) });
+        }
+        const currentX = geometry.x(wallNow, view);
+        const currentY = geometry.y(displayPrice, view);
+        if (currentX >= geometry.plotLeft - 10 && currentX <= geometry.plotRight + 10) {
+          path.push({ x: currentX, y: currentY });
+        }
+        if (path.length > 1) {
+          // soft fill under the line
+          graphics.moveTo(path[0].x, path[0].y);
+          for (let index = 1; index < path.length; index += 1) graphics.lineTo(path[index].x, path[index].y);
+          graphics.lineTo(path[path.length - 1].x, geometry.plotBottom)
+            .lineTo(path[0].x, geometry.plotBottom)
+            .closePath()
+            .fill({ color: theme.ink, alpha: 0.05 });
+          graphics.moveTo(path[0].x, path[0].y);
+          for (let index = 1; index < path.length; index += 1) graphics.lineTo(path[index].x, path[index].y);
+          graphics.stroke({ color: theme.ink, alpha: 1, width: 2, join: "round", cap: "round" });
         }
 
-        for (let index = 1; index < trail.length; index += 1) {
-          const previous = trail[index - 1];
-          const point = trail[index];
-          const age = wallNow - point.timestamp;
-          if (age > TRAIL_DURATION_MS) continue;
-          const alpha = (1 - age / TRAIL_DURATION_MS) * 0.7;
-          const color = point.rising ? 0x28e7a7 : 0xff5b70;
-          const startX = geometry.x(previous.timestamp, view);
-          const startY = geometry.y(previous.price, view);
-          const endX = geometry.x(point.timestamp, view);
-          const endY = geometry.y(point.price, view);
-          graphics.moveTo(startX, startY).lineTo(endX, endY).stroke({
-            color,
-            alpha: alpha * 0.22,
-            width: 10,
-            cap: "round",
-          });
-          graphics.moveTo(startX, startY).lineTo(endX, endY).stroke({
-            color,
-            alpha,
-            width: 3,
-            cap: "round",
-          });
-        }
-
+        // entry lines for open plays — the win/lose reference
         for (const play of currentPlays) {
           if (!["active", "settling", "refunding"].includes(play.status)) continue;
-          const color = play.direction === "up" ? 0x28e7a7 : 0xff5b70;
+          const settlingState = play.status !== "active";
+          const color = settlingState ? theme.wait : play.direction === "up" ? theme.up : theme.down;
           const playY = geometry.y(play.entryPrice, view);
           graphics.moveTo(geometry.x(play.openedAt, view), playY)
             .lineTo(geometry.x(play.expiresAt, view), playY)
-            .stroke({
-              color,
-              alpha: play.status === "active" ? 0.7 : 0.36,
-              width: 2,
-            });
-          graphics.circle(geometry.x(play.expiresAt, view), playY, 8).stroke({ color, alpha: 0.88, width: 2 });
-          graphics.circle(geometry.x(play.expiresAt, view), playY, 3).fill({ color, alpha: 0.92 });
+            .stroke({ color, alpha: settlingState ? 0.5 : 0.85, width: 2 });
+          graphics.circle(geometry.x(play.expiresAt, view), playY, 7).stroke({ color, alpha: 0.9, width: 2 });
+          graphics.circle(geometry.x(play.expiresAt, view), playY, 2.5).fill({ color, alpha: 1 });
         }
 
-        const currentX = geometry.x(wallNow, view);
-        const currentY = geometry.y(displayPrice, view);
+        // live price marker
         graphics.moveTo(geometry.plotLeft, currentY)
           .lineTo(geometry.plotRight, currentY)
-          .stroke({ color: 0x67e8f9, alpha: 0.5, width: 1 });
-        graphics.circle(currentX, currentY, 20).fill({ color: 0x67e8f9, alpha: 0.08 });
-        graphics.circle(currentX, currentY, 12).fill({ color: 0x67e8f9, alpha: 0.16 });
-        graphics.circle(currentX, currentY, 5).fill({ color: 0xd8fbff, alpha: 1 });
-        graphics.circle(currentX, currentY, 12).stroke({ color: 0x67e8f9, alpha: 0.42, width: 2 });
+          .stroke({ color: theme.mut, alpha: 0.35, width: 1 });
+        graphics.circle(currentX, currentY, 11).fill({ color: theme.ink, alpha: 0.08 });
+        graphics.circle(currentX, currentY, 3.5).fill({ color: theme.ink, alpha: 1 });
 
         if (frameAt - lastAxisAt >= 250) {
           setPriceLabels(nextPriceLabels);
@@ -315,7 +273,7 @@ export function PriceArena({ snapshot, plays, now }: PriceArenaProps) {
   };
 
   return (
-    <section className="price-arena" ref={hostRef} aria-label="Live BTC price arena">
+    <section className="price-arena" ref={hostRef} aria-label="Live price chart">
       <div className="arena-canvas" ref={canvasRef} aria-hidden="true" />
       <div className="price-axis" aria-hidden="true">
         {priceLabels.map((label) => (
@@ -325,15 +283,11 @@ export function PriceArena({ snapshot, plays, now }: PriceArenaProps) {
       <div className="arena-labels" aria-hidden="true">
         {timeLabels.map((label, index) => <span key={`${index}-${label}`}>{label}</span>)}
       </div>
-      <div className="price-reticle" aria-live="polite">
-        <span>LIVE PRICE</span>
-        <strong>${snapshot.currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
-      </div>
       <button className={`follow-button ${following ? "is-following" : ""}`} onClick={resetFollow} type="button">
-        {following ? "● FOLLOWING" : "↪ RETURN LIVE"}
+        ↪ Return to live
       </button>
       <p className="sr-only">
-        Current BTC price {snapshot.currentPrice.toFixed(2)} dollars. The chart can be dragged to inspect history and never places a play.
+        Current price {snapshot.currentPrice.toFixed(2)} dollars. The chart can be dragged to inspect history and never places a play.
       </p>
     </section>
   );

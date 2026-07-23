@@ -34,13 +34,13 @@ export function SessionGate({
   return (
     <div className="session-backdrop">
       <section className="session-dialog" role="dialog" aria-modal="true" aria-labelledby="session-title">
-        <span className="eyebrow">ONE-TIME PLAY SETUP</span>
+        <span className="eyebrow">One-time play setup</span>
         <h2 id="session-title">Start your play session</h2>
         <p>
           Choose the most test USDC this one-hour session may spend. Every play then runs instantly
           without another wallet prompt.
         </p>
-        <label htmlFor={inputId}>SESSION SPENDING LIMIT</label>
+        <label htmlFor={inputId}>Session spending limit</label>
         <div className="session-allowance">
           <span>$</span>
           <input
@@ -72,7 +72,7 @@ export function SessionGate({
           onClick={() => onStart(allowance)}
           type="button"
         >
-          {busy ? "SETTING UP SESSION…" : `START WITH $${allowance.toFixed(2)} LIMIT`}
+          {busy ? "Setting up session…" : `Start with a $${allowance.toFixed(2)} limit`}
         </button>
         {faucetAvailable ? (
           <button
@@ -81,7 +81,7 @@ export function SessionGate({
             onClick={onFund}
             type="button"
           >
-            {faucetBusy ? "GETTING TEST FUNDS…" : "GET DEVNET TEST FUNDS"}
+            {faucetBusy ? "Getting test funds…" : "Get devnet test funds"}
           </button>
         ) : null}
         <small className="session-note">

@@ -36,25 +36,27 @@ export function CommandDeck({ snapshot, occupiedPositions, busy = false, session
     : null;
 
   return (
-    <section className="command-deck" aria-label="Play controls">
-      <div className="amount-block">
-        <label htmlFor={inputId}>PLAY AMOUNT</label>
-        <div className="amount-row">
-          <span className="currency-mark">$</span>
-          <input
-            id={inputId}
-            type="number"
-            min="1"
-            max="1000"
-            step="1"
-            inputMode="decimal"
-            value={amount}
-            onChange={(event) => setAmount(Math.min(1_000, Math.max(1, Number(event.target.value) || 1)))}
-          />
+    <section className="ticket" aria-label="Play controls">
+      <div className="field">
+        <label htmlFor={inputId}>Play amount</label>
+        <div className="stake-row">
+          <div className="amount">
+            <span aria-hidden="true">$</span>
+            <input
+              id={inputId}
+              type="number"
+              min="1"
+              max="1000"
+              step="1"
+              inputMode="decimal"
+              value={amount}
+              onChange={(event) => setAmount(Math.min(1_000, Math.max(1, Number(event.target.value) || 1)))}
+            />
+          </div>
           <div className="presets" aria-label="Amount presets">
             {PRESETS.map((preset) => (
               <button
-                className={amount === preset ? "is-selected" : ""}
+                className={`num ${amount === preset ? "is-selected" : ""}`}
                 key={preset}
                 onClick={() => setAmount(preset)}
                 type="button"
@@ -64,15 +66,12 @@ export function CommandDeck({ snapshot, occupiedPositions, busy = false, session
             ))}
           </div>
         </div>
-        <div className="economics" aria-live="polite">
-          <span>10 sec · 1000x sensitivity</span>
-          <strong>
-            Max <em className="positive">+${maximumProfit(amount).toFixed(2)}</em>
-            <i aria-hidden="true">·</i>
-            Max <em className="negative">−${amount.toFixed(2)}</em>
-          </strong>
-        </div>
       </div>
+
+      <p className="economics num" aria-live="polite">
+        <b>10 sec · 1000× sensitivity</b> — max profit <b className="positive">+${maximumProfit(amount).toFixed(2)}</b> after
+        fee, max loss <b className="negative">−${amount.toFixed(2)}</b>.
+      </p>
 
       <div className="direction-actions">
         <button
@@ -80,28 +79,33 @@ export function CommandDeck({ snapshot, occupiedPositions, busy = false, session
           disabled={blocked}
           onClick={() => onPlay("up", amount)}
           type="button"
+          title="Price at settlement above entry"
         >
-          <span className="direction-icon" aria-hidden="true">↗</span>
-          <span><small>PRICE FINISHES HIGHER</small>PLAY UP</span>
+          <span className="direction-icon" aria-hidden="true">▲</span>
+          Play up
+          <span className="sr-only">— wins if the price at settlement is above entry</span>
         </button>
         <button
           className="play-button play-down"
           disabled={blocked}
           onClick={() => onPlay("down", amount)}
           type="button"
+          title="Price at settlement below entry"
         >
-          <span className="direction-icon" aria-hidden="true">↘</span>
-          <span><small>PRICE FINISHES LOWER</small>PLAY DOWN</span>
+          <span className="direction-icon" aria-hidden="true">▼</span>
+          Play down
+          <span className="sr-only">— wins if the price at settlement is below entry</span>
         </button>
-        {capacityReached ? <p className="write-lock">{snapshot.maxPositions}/{snapshot.maxPositions} play slots filled · wait for a result</p> : null}
-        {!capacityReached && marketCapacityReached ? <p className="write-lock">Arena is full · wait for a play to settle</p> : null}
-        {!capacityReached && !marketCapacityReached && (fundingMessage || statusMessage) ? (
-          <div className={`write-lock ${needsRecovery ? "needs-action" : ""}`} role="status">
-            <span>{fundingMessage ?? statusMessage}</span>
-            {needsRecovery && onRecover ? <button onClick={onRecover} type="button">CHECK STATUS</button> : null}
-          </div>
-        ) : null}
       </div>
+
+      {capacityReached ? <p className="write-lock">{snapshot.maxPositions}/{snapshot.maxPositions} play slots filled · wait for a result</p> : null}
+      {!capacityReached && marketCapacityReached ? <p className="write-lock">Market full · {snapshot.maxPositions} active positions</p> : null}
+      {!capacityReached && !marketCapacityReached && (fundingMessage || statusMessage) ? (
+        <div className="write-lock" role="status">
+          <span>{fundingMessage ?? statusMessage}</span>
+          {needsRecovery && onRecover ? <button onClick={onRecover} type="button">Check status</button> : null}
+        </div>
+      ) : null}
     </section>
   );
 }

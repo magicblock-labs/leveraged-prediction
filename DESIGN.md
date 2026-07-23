@@ -1,0 +1,213 @@
+# Lever — Design System
+
+Source of truth for all UI in this repo. Every screen, component, and copy change must follow this
+document; when something isn't covered here, extend this file first, then implement.
+
+Reference implementation: the "Lever" prototype — `docs/lever-prototype.html` in this repo (also
+published as a private artifact:
+`https://claude.ai/code/artifact/de01ae86-3d92-4cf9-8df4-9aa9f305bd14`). This document supersedes
+the current arcade-styled UI ("Price Arena" / command-deck look), which is being replaced.
+
+"Lever" is the working brand name; final naming is still open (see workspace TODO). The design
+does not depend on the name.
+
+## 1. Product stance
+
+Lever is a **leveraged prediction app that looks and feels like a consumer trading app** —
+Robinhood-calm, not casino-loud. The mechanic is playful (10-second, 1000× up/down positions);
+the interface earns trust by staying quiet, legible, and honest about the numbers.
+
+The mechanics the UI must express (see `../plans/leveraged-prediction/frontend-ux.md` for the full
+interaction contract — that document's states, copy table, and comprehension gates still bind):
+
+- One market at a time (e.g. BTC/USD), streamed live with visible feed freshness.
+- A play = direction (Up/Down) + stake ($1–$1,000, presets $5/$10/$25), at 1000× sensitivity.
+- Plays settle **automatically at whatever the price is 10 seconds after open** (crank-driven).
+  There is **no liquidation and no early close** — never imply one. After expiry a settlement
+  sample may take up to 10 more seconds (**Settling**); past that buffer the stake is **Refunded**.
+  Never show an expired-but-unsettled play as lost; a refund is neutral, never a win.
+- Loss is floored at the stake. Profit is capped at the stake and pays a 10% fee: max return is
+  1.9× stake ("max profit +$9.00 after fee" on a $10 play). Live P&L is labeled **Estimate**
+  until settlement is final.
+- Up to 8 concurrent positions; the market also caps at 8 active.
+- A mandatory one-hour session (user-chosen USDC allowance) makes plays one-tap; session limit and
+  buying power live in the navbar next to the wallet.
+
+## 2. Design principles
+
+1. **Color only when money moves.** The chrome is monochrome (ink on warm white / warm dark).
+   Green and red are reserved exclusively for direction, P&L, and price movement. No decorative
+   accent color exists. If an element isn't about money moving, it doesn't get color.
+2. **The chart is the hero.** It fills the available space; everything else is quiet furniture
+   around it. Never crowd it with widgets.
+3. **Numbers are the interface.** Big, tabular, precise. Prices to 3 decimals, money to 2,
+   percentages to 1. Never let ticking digits jiggle layout (`font-variant-numeric: tabular-nums`).
+4. **Honest microcopy.** Say exactly what happens, in the user's terms: "settles at whatever the
+   price is in 10 seconds", "you can never lose more than your stake". No hype, no apologies,
+   sentence case everywhere (buttons included).
+5. **Calm motion.** Live things tick and drain (price, countdown bars); nothing else animates.
+   Respect `prefers-reduced-motion`.
+
+## 3. Tokens
+
+Defined as CSS custom properties on `:root`. Both themes ship first-class; light is default,
+dark follows `prefers-color-scheme` and an explicit `data-theme` override wins in both directions.
+
+| Token          | Light                  | Dark                    | Role                                   |
+|----------------|------------------------|-------------------------|----------------------------------------|
+| `--bg`         | `#fafaf8`              | `#131417`               | Page ground (warm-biased, never pure)  |
+| `--card`       | `#ffffff`              | `#1a1b1f`               | Cards, pills, inputs                   |
+| `--ink`        | `#17181c`              | `#f0efec`               | Primary text, solid buttons            |
+| `--mut`        | `#6e7076`              | `#9b9c9f`               | Secondary text, labels                 |
+| `--hair`       | `#e8e7e3`              | `#26272b`               | Hairline borders, dividers, tracks     |
+| `--up`         | `#00a862`              | `#2bd186`               | Up direction, gains, price above ref   |
+| `--down`       | `#e5484d`              | `#ff6b6e`               | Down direction, losses, price below ref|
+| `--wait`       | `#b45309`              | `#f5a623`               | Waiting/degraded: settling, stale feed |
+| `--up-tint`    | `rgba(0,168,98,.09)`   | `rgba(43,209,134,.1)`   | Up chip/segment backgrounds            |
+| `--down-tint`  | `rgba(229,72,77,.09)`  | `rgba(255,107,110,.1)`  | Down chip/segment backgrounds          |
+| `--wait-tint`  | `rgba(180,83,9,.1)`    | `rgba(245,166,35,.12)`  | Waiting/degraded backgrounds           |
+
+Rules:
+
+- No other colors. White text on `--up`/`--down` solids is allowed (CTAs).
+- Semantic green/red is not an accent — don't use it for focus rings, links, or branding.
+- `--wait` (amber) is reserved for in-between and degraded states: settling/refunding plays, stale
+  feed, blocked-action notices. Color never carries status alone — pair it with a label.
+- Focus rings are `2px solid var(--ink)`, offset 2px.
+
+## 4. Typography
+
+- **Family**: Figtree (variable, 300–900) everywhere. Load via `next/font/google` with
+  `display: swap`. Fallback `system-ui, sans-serif`. No monospace anywhere in the product UI.
+- **Numerals**: `font-variant-numeric: tabular-nums` on every element that displays a number
+  (class `.num` in the prototype). Figtree ships `tnum` — verified.
+- **Wordmark**: `lever`, lowercase, weight 800, letter-spacing −0.4px, in `--ink`. Never colored.
+
+Scale (desktop / mobile):
+
+| Role                  | Size          | Weight | Notes                            |
+|-----------------------|---------------|--------|----------------------------------|
+| Big price             | 44px / 36px   | 700    | letter-spacing −1px, line-height 1.1 |
+| Section h2            | 13px          | 700    | uppercase, letter-spacing 0.6px, `--mut` |
+| Body / row primary    | 14.5–15px     | 600–700| sentence case                    |
+| Secondary / meta      | 12–13px       | 600    | `--mut`                          |
+| CTA label             | 16px          | 700    |                                  |
+| Change / chg line     | 14px          | 600    | colored by sign                  |
+
+## 5. Layout
+
+Navbar is always present: wordmark left; right side = buying power (label over amount,
+right-aligned) + wallet pill (hairline border, green 7px status dot, compact address `7xKp…9fQ4`).
+Navbar is sticky, `--bg` with a `--hair` bottom border. On <560px, hide the buying-power block
+(wallet pill stays).
+
+**Mobile (default)**: single centered column, max-width 680px, 20px side padding, 24px vertical
+gap, in order: quote (eyebrow `Solana · SOL-USD`, big price, change line) → chart (260px tall) →
+ticket → positions. Page scrolls normally.
+
+**Desktop (≥1000px)**: full-bleed two-column grid, `minmax(0,1fr) 400px`, 36px column gap,
+height `calc(100dvh − navbar)`:
+
+- Left ("stage"): quote on top, chart fills all remaining height.
+- Right ("rail"): ticket, then positions; rail scrolls internally if needed.
+- Implemented with `display: contents` wrappers so the mobile DOM is untouched.
+
+Radii: cards 16px, buttons/inputs 10–12px, pills 999px, chips 10px. Spacing unit 4px; card
+padding 20px; row padding 14px vertical with `--hair` bottom borders.
+
+## 6. Components
+
+### Quote header
+Eyebrow row: market label (13px, `--mut`) + feed pill — `Live · 0.4s` (`--up-tint`),
+`Delayed · last update 7s ago` (`--wait-tint`), or `Offline` (`--down-tint`), always dot + label.
+Below: big price (2 decimals for BTC-scale, tabular) → change line `▼ $2.65 (0.004%) · last 40s`,
+colored by sign over the visible chart window.
+
+### Chart (canvas, Pixi)
+- The chart is presentation-only: drag pans, a `↪ Return to live` pill restores follow; no gesture
+  or click ever trades. Fixed 40-second window (−20s … +20s around "now") with five time labels;
+  price axis labels on the left gutter. Both label sets are `--mut`, 11px.
+- Faint gridlines in `--hair` (70% alpha) — they carry the time/price reading, keep them quiet.
+- Price path: **monochrome `--ink` line, 2px**, with a 5%-alpha ink fill under it. Color is
+  reserved for positions — the line itself is never green/red.
+- Live marker: ink dot (3.5px + soft halo) at "now" plus a `--mut` horizontal reference line.
+  Display price eases toward the latest tick.
+- **Per open play**: a horizontal entry line at 85% alpha in the play's direction color, drawn
+  from open time to expiry, ending in an expiry ring marker. While settling/refunding the line
+  turns `--wait` at 50% alpha. This is the win/lose reference the player watches.
+- Theme-aware: canvas colors are read from the CSS tokens (re-read ~every 500ms so a theme switch
+  propagates). DPR-aware sizing.
+
+### Ticket (card)
+1. Stake field: label `Play amount`, `$` input (17px bold) + preset pills `$5 $10 $25`; active
+   preset inverts to `--ink` bg / `--bg` text. Range $1–$1,000.
+2. Economics line (12.5px `--mut`, live-updating): `10 sec · 1000× sensitivity — max profit
+   +$9.00 after fee, max loss −$10.00.` Max profit/loss must be visible before the tap.
+3. Direction buttons: **one-tap** `▲ Play up` / `▼ Play down`, side by side, ≥64px tall, solid
+   `--up`/`--down` with white text. Supporting copy ("Price at settlement above/below entry")
+   lives in `title`/screen-reader text, not the label. Both disable together whenever any gate
+   fails (no wallet, no session allowance, insufficient balance, stale feed, close-only market,
+   capacity, in-flight intent).
+4. Blocked/status notices render below the buttons as `--wait-tint` rounded rows stating exactly
+   what to fix (`You need $10.00 USDC to play`, `Market full · 8 active positions`), with a
+   `Check status` action when an ambiguous transaction needs probing.
+
+### Positions (list)
+Section h2 `POSITIONS` with a `n/8` capacity counter. Rows, nearest expiry first:
+
+- Chip: 36px rounded square, direction tint + `▲`/`▼`; turns `--wait-tint` while settling.
+- Row: `Up · $10.00 stake` over `<status> · Entry $65,378 · 6.4s`, with a 3px progress bar
+  (`--ink`, `--wait` when settling) tracking open → expiry.
+- Status words: `Submitting / In play / Settling / Refunding / Won / Lost / Refunded` — sentence
+  case; settling/refunding in `--wait`, won `--up`, lost `--down`.
+- Right side: live **Estimate** (colored, signed) until final, then **Payout** (neutral value).
+  `Payout ready · $X` chip when a fallback claim exists, plus the protected-payout claim card
+  above the list when escrow is funded.
+- Empty state: `No positions yet — choose an amount, then play up or down.`
+- Footer note: `Results stay neutral until settlement is final.`
+
+### Wallet & session
+Wallet pill opens the wallet adapter modal when disconnected; connected state shows the dot +
+compact address. Buying power reflects the session balance and updates on open/settle.
+Session-gate and faucet flows adopt this same visual language (cards, hairlines, ink CTAs) —
+no bespoke styling.
+
+## 7. Motion
+
+- Price line/dot movement and countdown bars: continuous (rAF), no easing curves needed beyond
+  the price/scale lerp.
+- State changes (notices, rows appearing): instant swap; no slides, fades, or confetti.
+- Allowed micro-interaction: CTA hover `filter: brightness(1.06)`; live-dot pulse ≤1.4s opacity
+  blink. Both disabled under `prefers-reduced-motion`.
+- Haptics (mobile): a short vibration on open and settle is fine; nothing longer than 60ms.
+
+## 8. Copy voice
+
+- Sentence case everywhere, including buttons and section labels (`POSITIONS` h2 is a styled
+  uppercase, the source text stays "Positions").
+- Verbs state exactly what happens: "Open Up position", "Position settled". The action keeps its
+  name across the flow (open → opened; settle → settled).
+- Numbers in copy are formatted like the UI (`$25.00`, `$25,000.00`, `$195.600`).
+- Errors: what went wrong + how to fix, no apology, no jargon. Empty states invite the action.
+- Never say: liquidation, bust, margin call, "closed early", or anything implying the position
+  can end before 10s.
+
+## 9. Accessibility & quality bar
+
+- All interactive elements are real `<button>`/`<input>` with visible `:focus-visible` rings.
+- Direction segments use `aria-pressed`; notices render in an `aria-live="polite"` region.
+- Color is never the only signal: direction always pairs color with `▲`/`▼`, P&L with a sign.
+- Contrast: body text ≥ 4.5:1 on `--bg`/`--card` in both themes (the token set satisfies this).
+- Layout holds from 320px width up; the page body never scrolls horizontally.
+
+## 10. Implementation notes for the revamp
+
+- Tokens live in `app/globals.css` as the custom-property block from §3 (media query + explicit
+  `data-theme` overrides). Components style through tokens only — no hardcoded hexes.
+- Font: `next/font/google` Figtree; remove any arcade/monospace faces from the product UI.
+- Existing component mapping: `game-arena` → page shell/layout, `price-arena` → chart,
+  `command-deck` → ticket, `your-plays` → positions, `session-gate` → gate card in the same
+  language. Keep hooks (`use-game-snapshot`, `use-play-transaction`, `use-game-session`,
+  `use-devnet-faucet`) unchanged; this is a presentation-layer revamp.
+- The prototype (`docs/lever-prototype.html`) is the visual spec; where this doc and the prototype
+  disagree, update this doc deliberately rather than drifting.

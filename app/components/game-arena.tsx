@@ -62,10 +62,10 @@ export function GameArena() {
   if (!snapshot) {
     return (
       <main className="loading-screen">
-        <div className="loading-mark">↗</div>
-        <strong>{error ? "PRICE ARENA OFFLINE" : "LOADING PRICE ARENA"}</strong>
-        <p>{error ?? "Preparing the playfield…"}</p>
-        {error ? <button onClick={() => void refresh()} type="button">TRY AGAIN</button> : null}
+        <div className="loading-mark">lever</div>
+        <strong>{error ? "Live market unavailable" : "Loading market"}</strong>
+        <p>{error ?? "Connecting to the live price feed…"}</p>
+        {error ? <button onClick={() => void refresh()} type="button">Try again</button> : null}
       </main>
     );
   }
@@ -73,56 +73,90 @@ export function GameArena() {
   const walletLabel = wallet.address
     ? compactAddress(wallet.address)
     : wallet.available
-      ? wallet.connecting ? "CONNECTING…" : "CONNECT WALLET"
-      : "WALLET NOT FOUND";
+      ? wallet.connecting ? "Connecting…" : "Connect wallet"
+      : "Wallet not found";
+
+  const windowOpen = snapshot.priceHistory[0]?.price;
+  const change = windowOpen !== undefined ? snapshot.currentPrice - windowOpen : null;
+  const changePct = windowOpen ? Math.abs(((snapshot.currentPrice - windowOpen) / windowOpen) * 100) : 0;
 
   return (
-    <main className="game-shell" data-mode={snapshot.mode}>
-      <header className="game-hud">
-        <div className="brand-block">
-          <span className="brand-mark" aria-hidden="true">↗</span>
-          <div><span>MAGICBLOCK ARCADE</span><h1>{snapshot.gameLabel}</h1></div>
-        </div>
-        <div className="market-block">
-          <span className="market-chip">₿</span>
-          <div><span>{snapshot.marketLabel}</span><strong>${snapshot.currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></div>
-          <span className={`feed-pill ${snapshot.feedHealth}`}><i />{snapshot.feedHealth === "live" ? `LIVE · ${snapshot.feedAgeSeconds.toFixed(1)}s` : snapshot.feedHealth.toUpperCase()}</span>
-        </div>
-        <div className="hud-rule"><span>ROUND</span><strong>10 SECOND PLAYS</strong></div>
-        <div className="hud-actions">
-          <button className={`icon-button ${feedback ? "is-on" : ""}`} onClick={() => setFeedback((value) => !value)} type="button" aria-label={`${feedback ? "Disable" : "Enable"} haptic feedback`}>{feedback ? "◖))" : "◖×"}</button>
-          <button className="help-button" onClick={() => setShowHelp(true)} type="button">? HOW TO PLAY</button>
+    <main className="app-shell" data-mode={snapshot.mode}>
+      <header className="topbar">
+        <div className="mark">lever</div>
+        <div className="topbar-actions">
+          <button
+            className={`quiet-button feedback-toggle ${feedback ? "is-on" : ""}`}
+            onClick={() => setFeedback((value) => !value)}
+            type="button"
+            aria-label={`${feedback ? "Disable" : "Enable"} haptic feedback`}
+          >
+            {feedback ? "Haptics on" : "Haptics off"}
+          </button>
+          <button className="quiet-button help-toggle" onClick={() => setShowHelp(true)} type="button">
+            How to play
+          </button>
           {faucet.available ? (
             <button
-              className="faucet-button"
+              className="quiet-button"
               disabled={faucet.busy}
               onClick={requestTestFunds}
               type="button"
               title={faucet.targetSol !== null && faucet.targetUsdc !== null ? `Top up to ${faucet.targetSol} devnet SOL and $${faucet.targetUsdc} test USDC` : "Get devnet test funds"}
             >
-              {faucet.busy ? "FUNDING…" : "GET TEST FUNDS"}
+              {faucet.busy ? "Funding…" : "Get test funds"}
             </button>
           ) : null}
           {wallet.address && session.ready ? (
-            <div className="session-pill" title="One-hour session spending allowance remaining">
-              <span>SESSION</span>
-              <strong>${session.remainingAllowanceUsd?.toFixed(2)}</strong>
+            <div className="stat-block" title="One-hour session spending allowance remaining">
+              <span>Session limit</span>
+              <strong className="num">${session.remainingAllowanceUsd?.toFixed(2)}</strong>
             </div>
           ) : null}
-          <div className="balance-block"><span>PLAY BALANCE</span><strong>{snapshot.walletBalanceUsd === null ? "—" : `$${snapshot.walletBalanceUsd.toFixed(2)}`}</strong></div>
-          <button className="wallet-button" onClick={() => void wallet.connect()} disabled={wallet.connecting} type="button"><span className="wallet-led" />{walletLabel}</button>
+          <div className="stat-block">
+            <span>Buying power</span>
+            <strong className="num">{snapshot.walletBalanceUsd === null ? "—" : `$${snapshot.walletBalanceUsd.toFixed(2)}`}</strong>
+          </div>
+          <button className="wallet" onClick={() => void wallet.connect()} disabled={wallet.connecting} type="button">
+            <span className={`dot ${wallet.address ? "is-connected" : ""}`} />
+            {walletLabel}
+          </button>
         </div>
       </header>
 
-      {error ? <div className="system-banner error" role="alert"><strong>LIVE UPDATE PAUSED</strong><span>{error}</span><button onClick={() => void refresh()} type="button">Retry</button></div> : null}
-      {oracleError ? <div className="system-banner warning" role="status"><strong>REAL-TIME FEED DEGRADED</strong><span>{oracleError} · snapshot fallback remains active</span></div> : null}
-      {positionError ? <div className="system-banner warning" role="status"><strong>PLAY UPDATES DEGRADED</strong><span>{positionError} · snapshot fallback remains active</span></div> : null}
-      {snapshot.marketMode === "close-only" ? <div className="system-banner warning" role="status"><strong>PLAY PAUSED</strong><span>This market is settling existing positions.</span></div> : null}
+      {error ? <div className="system-banner error" role="alert"><strong>Live updates paused</strong><span>{error}</span><button onClick={() => void refresh()} type="button">Retry</button></div> : null}
+      {oracleError ? <div className="system-banner warning" role="status"><strong>Price stream degraded</strong><span>{oracleError} · snapshot fallback remains active</span></div> : null}
+      {positionError ? <div className="system-banner warning" role="status"><strong>Position updates degraded</strong><span>{positionError} · snapshot fallback remains active</span></div> : null}
+      {snapshot.marketMode === "close-only" ? <div className="system-banner warning" role="status"><strong>Trading paused</strong><span>This market is settling existing positions.</span></div> : null}
       {faucet.message ? <div className={`faucet-toast ${faucet.tone}`} role={faucet.tone === "error" ? "alert" : "status"}>{faucet.message}</div> : null}
 
-      <div className="game-board">
-        <div className="arena-column">
+      <div className="col">
+        <div className="stage">
+          <section className="quote">
+            <div className="quote-top">
+              <span className="eyebrow">{snapshot.marketLabel}</span>
+              <span className={`feed-pill ${snapshot.feedHealth}`}>
+                <i aria-hidden="true" />
+                {snapshot.feedHealth === "live"
+                  ? `Live · ${snapshot.feedAgeSeconds.toFixed(1)}s`
+                  : snapshot.feedHealth === "delayed"
+                    ? `Delayed · last update ${snapshot.feedAgeSeconds.toFixed(0)}s ago`
+                    : "Offline"}
+              </span>
+            </div>
+            <h1 className="num">${snapshot.currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h1>
+            {change !== null ? (
+              <span className={`chg num ${change >= 0 ? "positive" : "negative"}`}>
+                {change >= 0 ? "▲" : "▼"} ${Math.abs(change).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ({changePct.toFixed(3)}%) · last 40s
+              </span>
+            ) : (
+              <span className="chg">10-second plays · 1000× sensitivity</span>
+            )}
+          </section>
           <PriceArena snapshot={snapshot} plays={plays} now={now} />
+        </div>
+
+        <aside className="rail">
           <CommandDeck
             snapshot={snapshot}
             occupiedPositions={plays.length}
@@ -134,15 +168,15 @@ export function GameArena() {
             onRecover={() => void transaction.recover()}
             onPlay={placePlay}
           />
-        </div>
-        <YourPlays
-          plays={plays}
-          now={now}
-          capacity={snapshot.maxPositions}
-          fallbackClaimableUsd={snapshot.fallbackClaimableUsd}
-          claimBusy={transaction.claimBusy}
-          onClaimFallback={() => void transaction.claimFallback()}
-        />
+          <YourPlays
+            plays={plays}
+            now={now}
+            capacity={snapshot.maxPositions}
+            fallbackClaimableUsd={snapshot.fallbackClaimableUsd}
+            claimBusy={transaction.claimBusy}
+            onClaimFallback={() => void transaction.claimFallback()}
+          />
+        </aside>
       </div>
 
       <div className="mode-badge"><span className={refreshing ? "pulse" : ""} />{snapshot.notice}</div>
@@ -164,15 +198,15 @@ export function GameArena() {
         <div className="dialog-backdrop" role="presentation" onMouseDown={() => setShowHelp(false)}>
           <section className="help-dialog" role="dialog" aria-modal="true" aria-labelledby="help-title" onMouseDown={(event) => event.stopPropagation()}>
             <button className="dialog-close" onClick={() => setShowHelp(false)} type="button" aria-label="Close help">×</button>
-            <span className="eyebrow">THREE SIMPLE STEPS</span>
+            <span className="eyebrow">Three simple steps</span>
             <h2 id="help-title">How to play</h2>
             <ol>
               <li><strong>Pick an amount.</strong><span>You can lose at most that amount.</span></li>
               <li><strong>Play up or down.</strong><span>Choose where the price will finish after 10 seconds.</span></li>
-              <li><strong>Watch Your Plays.</strong><span>At 0.0s the result may still be settling for up to 10 seconds.</span></li>
+              <li><strong>Watch your positions.</strong><span>At 0.0s the result may still be settling for up to 10 seconds.</span></li>
             </ol>
             <p>Maximum profit is 90% of your play amount after the profit fee. A refund is not a win.</p>
-            <button className="dialog-action" onClick={() => setShowHelp(false)} type="button">GOT IT</button>
+            <button className="dialog-action" onClick={() => setShowHelp(false)} type="button">Got it</button>
           </section>
         </div>
       ) : null}
