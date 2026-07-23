@@ -1,6 +1,5 @@
 use anchor_lang::prelude::*;
 use ephemeral_rollups_sdk::anchor::ephemeral;
-use hydra_api::instruction::find_crank_pda;
 use session_keys::{session_auth_or, SessionError};
 use solana_sha256_hasher::hashv;
 
@@ -41,6 +40,7 @@ pub const ORACLE_PROGRAM_ID: Pubkey = pubkey!("PriCems5tHihc6UDXDjzjeawomAwBduWM
 pub const ORACLE_EXPONENT: i32 = 8;
 pub const COLLATERAL_DECIMALS: u8 = 6;
 pub const LEVERAGE: u16 = 1_000;
+pub const MAX_GROSS_PROFIT_MULTIPLIER: u16 = 5;
 pub const POSITION_DURATION_SECONDS: i64 = 10;
 pub const SETTLEMENT_BUFFER_SECONDS: i64 = 10;
 pub const MAX_MARKET_FINANCIALLY_ACTIVE_POSITIONS: u32 = 8;
@@ -54,10 +54,8 @@ pub const PROFIT_FEE_BPS: u16 = 1_000;
 pub const PROTOCOL_FEE_SHARE_BPS: u16 = 2_000;
 pub const ORACLE_MAX_AGE_SECONDS: u16 = 2;
 pub const ORACLE_MAX_CONFIDENCE_BPS: u16 = 1;
-pub const HYDRA_FIRST_ATTEMPT_DELAY_SLOTS: u64 = 180;
-pub const HYDRA_INTERVAL_SLOTS: u64 = 20;
-pub const HYDRA_REMAINING_ATTEMPTS: u64 = 19;
-pub const HYDRA_COMPUTE_UNIT_LIMIT: u32 = 300_000;
+pub const SETTLEMENT_TASK_INTERVAL_MILLIS: i64 = 1_000;
+pub const SETTLEMENT_TASK_ITERATIONS: i64 = 25;
 
 pub fn require_market_financial_capacity(active_positions: u32) -> Result<()> {
     require!(
@@ -142,25 +140,32 @@ pub struct FallbackPayoutClaimed {
     pub assets: u64,
 }
 
-pub fn hydra_task_seed(market: Pubkey, user: Pubkey, nonce: u32, task_salt: [u8; 32]) -> [u8; 32] {
-    hashv(&[
+pub fn settlement_task_id(
+    market: Pubkey,
+    user: Pubkey,
+    nonce: u32,
+    task_salt: [u8; 32],
+) -> i64 {
+    let digest = hashv(&[
         b"leveraged_prediction_position",
         market.as_ref(),
         user.as_ref(),
         &nonce.to_le_bytes(),
         &task_salt,
     ])
-    .to_bytes()
+    .to_bytes();
+    let mut id_bytes = [0_u8; 8];
+    id_bytes.copy_from_slice(&digest[..8]);
+    let id = u64::from_le_bytes(id_bytes) & i64::MAX as u64;
+    i64::try_from(id.max(1)).expect("positive 63-bit value always fits in i64")
 }
 
-pub fn hydra_crank_address(
-    market: Pubkey,
-    user: Pubkey,
-    nonce: u32,
-    task_salt: [u8; 32],
-) -> Pubkey {
-    let seed = hydra_task_seed(market, user, nonce, task_salt);
-    Pubkey::new_from_array(find_crank_pda(&seed).0.to_bytes())
+pub fn settlement_crank_signer(task_authority: Pubkey) -> Pubkey {
+    Pubkey::find_program_address(
+        &[b"crank-executor", task_authority.as_ref()],
+        &magicblock_magic_program_api::CRANK_PROGRAM_ID,
+    )
+    .0
 }
 
 #[ephemeral]
@@ -291,30 +296,25 @@ pub mod leveraged_prediction {
 #[cfg(test)]
 mod address_tests {
     use super::*;
-    use crate::instructions::HYDRA_PROGRAM_ID;
-    use anchor_lang::solana_program::sysvar::instructions::{
-        BorrowedAccountMeta, BorrowedInstruction,
-    };
-    use anchor_lang::solana_program::sysvar::SysvarId;
-    use solana_instructions_sysvar::{construct_instructions_data, store_current_index_checked};
 
     #[test]
-    fn position_task_salt_changes_the_crank_address() {
+    fn position_task_salt_changes_the_scheduler_task_id() {
         let market = Pubkey::new_unique();
         let user = Pubkey::new_unique();
         assert_ne!(
-            hydra_crank_address(market, user, 1, [1; 32]),
-            hydra_crank_address(market, user, 1, [2; 32])
+            settlement_task_id(market, user, 1, [1; 32]),
+            settlement_task_id(market, user, 1, [2; 32])
         );
     }
 
     #[test]
-    fn hydra_crank_derivation_matches_the_typescript_client_vector() {
+    fn scheduler_task_ids_are_positive() {
         let market = pubkey!("6ME7jFHJkk27zAM7hz2A3V1Y4EeTkcjyZxnekQLtn8V1");
         let user = pubkey!("11111111111111111111111111111112");
+        assert!(settlement_task_id(market, user, 7, [1; 32]) > 0);
         assert_eq!(
-            hydra_crank_address(market, user, 7, [1; 32]),
-            pubkey!("6eK97Qn52NaBP8RJYUgUEGFJqoVoKEckqtaemEKF3ZZQ")
+            settlement_crank_signer(market),
+            pubkey!("BLfDLg2Sv4wrbRaNb6sZv6wWvrg1BpaDArW5FaoricW1")
         );
     }
 
@@ -401,55 +401,6 @@ mod address_tests {
         }
     }
 
-    fn trigger_sysvar_data(
-        program_id: &Pubkey,
-        crank: &Pubkey,
-        instruction_data: &[u8],
-    ) -> Vec<u8> {
-        let trigger = BorrowedInstruction {
-            program_id,
-            accounts: vec![BorrowedAccountMeta {
-                pubkey: crank,
-                is_signer: false,
-                is_writable: true,
-            }],
-            data: instruction_data,
-        };
-        let current = BorrowedInstruction {
-            program_id: &crate::ID,
-            accounts: vec![],
-            data: &[],
-        };
-        let mut data = construct_instructions_data(&[trigger, current]);
-        store_current_index_checked(&mut data, 1).unwrap();
-        data
-    }
-
-    fn check_trigger(data: &mut [u8], expected_crank: Pubkey) -> Result<()> {
-        let key = Instructions::id();
-        let owner = Pubkey::default();
-        let mut lamports = 0;
-        let account = AccountInfo::new(&key, false, false, &mut lamports, data, &owner, false);
-        instructions::settle_position::require_hydra_trigger(&account, expected_crank)
-    }
-
-    #[test]
-    fn previous_instruction_must_be_hydra_trigger() {
-        let crank = Pubkey::new_unique();
-        let mut valid =
-            trigger_sysvar_data(&HYDRA_PROGRAM_ID, &crank, &[hydra_api::consts::ix::TRIGGER]);
-        assert!(check_trigger(&mut valid, crank).is_ok());
-
-        let wrong_id = Pubkey::new_unique();
-        let mut wrong_program =
-            trigger_sysvar_data(&wrong_id, &crank, &[hydra_api::consts::ix::TRIGGER]);
-        assert!(check_trigger(&mut wrong_program, crank).is_err());
-        let mut wrong_discriminator = trigger_sysvar_data(&HYDRA_PROGRAM_ID, &crank, &[0]);
-        assert!(check_trigger(&mut wrong_discriminator, crank).is_err());
-        let mut wrong_crank =
-            trigger_sysvar_data(&HYDRA_PROGRAM_ID, &crank, &[hydra_api::consts::ix::TRIGGER]);
-        assert!(check_trigger(&mut wrong_crank, Pubkey::new_unique()).is_err());
-    }
 }
 
 #[cfg(test)]

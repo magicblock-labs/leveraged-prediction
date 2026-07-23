@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import type { Direction, MarketSnapshot, Play } from "@/app/lib/domain";
@@ -14,7 +14,10 @@ import {
 import {
   claimFallbackPayoutFlow,
   openPositionFlow,
+  prepareOpenPosition,
   recoverOpenPositionIntent,
+  refreshPreparedOpenPosition,
+  type PreparedOpenPositionContext,
   type TransactionProgress,
 } from "@/app/lib/live/transaction-flow";
 import type { StoredGameSession } from "@/app/lib/live/session-store";
@@ -45,6 +48,32 @@ export function usePlayTransaction(
   const [intent, setIntent] = useState<OpenPositionIntent | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [claimStatus, setClaimStatus] = useState<string | null>(null);
+  const [preparedKey, setPreparedKey] = useState<string | null>(null);
+  const preparedRef = useRef<PreparedOpenPositionContext | null>(null);
+  const snapshotMode = snapshot?.mode;
+  const snapshotMarketId = snapshot?.marketId;
+  const snapshotWalletAddress = snapshot?.walletAddress ?? null;
+  const snapshotErEndpoint = snapshot?.erEndpoint;
+  const snapshotCollateralMint = snapshot?.collateralMint;
+  const snapshotOracleAddress = snapshot?.oracleAddress;
+  const preparationKey = wallet.publicKey &&
+    session &&
+    snapshotMode === "live" &&
+    snapshotMarketId !== undefined &&
+    snapshotErEndpoint &&
+    snapshotCollateralMint &&
+    snapshotOracleAddress
+    ? [
+        wallet.publicKey.toBase58(),
+        session.sessionToken,
+        snapshotMarketId,
+        snapshotErEndpoint,
+        snapshotCollateralMint,
+        snapshotOracleAddress,
+      ].join(":")
+    : null;
+  const submissionReady = preparationKey !== null &&
+    preparedKey === preparationKey;
 
   useEffect(() => {
     if (!wallet.publicKey || snapshot?.mode !== "live") return;
@@ -58,7 +87,7 @@ export function usePlayTransaction(
   }, [snapshot?.mode, wallet.publicKey]);
 
   useEffect(() => {
-    if (!intent || intent.status !== "accepted" || intent.nonce === undefined || !snapshot) return;
+    if (!intent || intent.nonce === undefined || !snapshot) return;
     if (!snapshot.plays.some((play) => play.id === `${intent.marketId}-${intent.nonce}`)) return;
     const timeout = window.setTimeout(() => {
       clearOpenIntent(intent.user, intent.marketId);
@@ -67,6 +96,74 @@ export function usePlayTransaction(
     }, 0);
     return () => window.clearTimeout(timeout);
   }, [intent, snapshot]);
+
+  useEffect(() => {
+    if (
+      !preparationKey ||
+      !wallet.publicKey ||
+      !session ||
+      snapshotMarketId === undefined
+    ) {
+      preparedRef.current = null;
+      return;
+    }
+
+    let active = true;
+    let interval: number | null = null;
+    const prepare = async () => {
+      try {
+        const prepared = await prepareOpenPosition(
+          wallet.publicKey!,
+          session,
+          {
+            marketId: snapshotMarketId,
+            walletAddress: snapshotWalletAddress,
+            erEndpoint: snapshotErEndpoint,
+            collateralMint: snapshotCollateralMint,
+            oracleAddress: snapshotOracleAddress,
+          },
+        );
+        if (!active) return;
+        preparedRef.current = prepared;
+        setPreparedKey(preparationKey);
+        interval = window.setInterval(() => {
+          void refreshPreparedOpenPosition(prepared).catch((cause) => {
+            console.warn("[play:prepare] blockhash refresh failed", cause);
+          });
+        }, 2_000);
+      } catch (cause) {
+        if (!active) return;
+        preparedRef.current = null;
+        setPreparedKey(null);
+        setError(cause instanceof Error ? cause.message : "Instant play is not ready");
+      }
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== "visible" || !preparedRef.current) return;
+      void refreshPreparedOpenPosition(preparedRef.current).catch((cause) => {
+        console.warn("[play:prepare] visible-tab blockhash refresh failed", cause);
+      });
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    void prepare();
+
+    return () => {
+      active = false;
+      if (interval !== null) window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      preparedRef.current = null;
+    };
+  }, [
+    preparationKey,
+    session,
+    snapshotCollateralMint,
+    snapshotErEndpoint,
+    snapshotMarketId,
+    snapshotMode,
+    snapshotOracleAddress,
+    snapshotWalletAddress,
+    wallet.publicKey,
+  ]);
 
   const submit = useCallback(async (direction: Direction, amount: number) => {
     if (snapshot?.mode !== "live") return;
@@ -78,6 +175,15 @@ export function usePlayTransaction(
       setError("Start a play session before choosing Up or Down");
       return;
     }
+    const prepared = preparedRef.current;
+    if (
+      !prepared ||
+      !snapshot.currentRawPrice ||
+      snapshot.nextPositionNonce === undefined
+    ) {
+      setError("Instant play is still preparing");
+      return;
+    }
     setError(null);
     try {
       const result = await openPositionFlow(
@@ -85,13 +191,20 @@ export function usePlayTransaction(
         direction,
         amount,
         session,
+        prepared,
+        {
+          rawPrice: snapshot.currentRawPrice,
+          nextPositionNonce: snapshot.nextPositionNonce,
+        },
         (next) => {
           setProgress(next);
           setIntent(next.intent);
         },
       );
       setIntent(result.intent);
-      await Promise.all([refresh(), refreshSession()]);
+      window.setTimeout(() => {
+        void Promise.all([refresh(), refreshSession()]);
+      }, 250);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Play submission failed");
       setProgress(null);
@@ -99,7 +212,14 @@ export function usePlayTransaction(
       const stored = loadOpenIntent(wallet.publicKey.toBase58(), config.marketId);
       setIntent(stored && requiresIntentRecovery(stored) ? stored : null);
     }
-  }, [refresh, refreshSession, session, setVisible, snapshot?.mode, wallet.publicKey]);
+  }, [
+    refresh,
+    refreshSession,
+    session,
+    setVisible,
+    snapshot,
+    wallet.publicKey,
+  ]);
 
   const recover = useCallback(async () => {
     if (!wallet.publicKey || !intent) return;
@@ -160,6 +280,8 @@ export function usePlayTransaction(
       ? "Connect a wallet to play"
       : snapshot?.mode === "live" && !session
         ? "Start a session to play"
+        : snapshot?.mode === "live" && !submissionReady
+          ? "Preparing instant play…"
         : null
   );
 
@@ -171,6 +293,7 @@ export function usePlayTransaction(
     busy: Boolean(progress || claimStatus),
     claimBusy: Boolean(claimStatus),
     needsRecovery,
+    submissionReady,
     statusMessage,
   };
 }

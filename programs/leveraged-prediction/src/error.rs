@@ -36,14 +36,12 @@ pub enum ErrorCode {
     ActiveUserLiquidity,
     #[msg("position nonce does not match market sequence")]
     InvalidNonce,
-    #[msg("Hydra crank address does not match the position task seed")]
-    InvalidHydraCrank,
-    #[msg("position settlement was not invoked by its Hydra crank")]
-    InvalidHydraTrigger,
-    #[msg("session fee payer cannot fund the Hydra task")]
-    InsufficientHydraTaskLamports,
-    #[msg("Hydra task creation failed")]
-    HydraTaskCreationFailed,
+    #[msg("settlement task salt or scheduler signer is invalid")]
+    InvalidSettlementTask,
+    #[msg("position settlement was not invoked by its MagicBlock scheduler")]
+    InvalidSettlementTrigger,
+    #[msg("MagicBlock settlement task creation failed")]
+    SettlementTaskCreationFailed,
     #[msg("user token account is not owned by the session authority")]
     InvalidTokenOwner,
     #[msg("user token account mint does not match protocol collateral")]

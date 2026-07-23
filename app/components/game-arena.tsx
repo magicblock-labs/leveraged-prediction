@@ -18,7 +18,7 @@ function compactAddress(address: string): string {
 
 export function GameArena() {
   const wallet = useGameWallet();
-  const { snapshot, error, oracleError, positionError, refreshing, refresh } = useGameSnapshot(wallet.address);
+  const { snapshot, error, oracleError, marketError, positionError, refreshing, refresh } = useGameSnapshot(wallet.address);
   const session = useGameSession();
   const transaction = usePlayTransaction(snapshot, refresh, session.session, session.refresh);
   const faucet = useDevnetFaucet(wallet.address, refresh);
@@ -126,6 +126,7 @@ export function GameArena() {
 
       {error ? <div className="system-banner error" role="alert"><strong>Live updates paused</strong><span>{error}</span><button onClick={() => void refresh()} type="button">Retry</button></div> : null}
       {oracleError ? <div className="system-banner warning" role="status"><strong>Price stream degraded</strong><span>{oracleError} · snapshot fallback remains active</span></div> : null}
+      {marketError ? <div className="system-banner warning" role="status"><strong>Arena updates degraded</strong><span>{marketError} · snapshot fallback remains active</span></div> : null}
       {positionError ? <div className="system-banner warning" role="status"><strong>Position updates degraded</strong><span>{positionError} · snapshot fallback remains active</span></div> : null}
       {snapshot.marketMode === "close-only" ? <div className="system-banner warning" role="status"><strong>Trading paused</strong><span>This market is settling existing positions.</span></div> : null}
       {faucet.message ? <div className={`faucet-toast ${faucet.tone}`} role={faucet.tone === "error" ? "alert" : "status"}>{faucet.message}</div> : null}
@@ -162,6 +163,7 @@ export function GameArena() {
             occupiedPositions={plays.length}
             busy={transaction.busy}
             sessionReady={session.ready}
+            submissionReady={transaction.submissionReady}
             sessionAllowanceUsd={session.remainingAllowanceUsd}
             statusMessage={transaction.statusMessage}
             needsRecovery={transaction.needsRecovery}
@@ -207,7 +209,7 @@ export function GameArena() {
               <li><strong>Play up or down.</strong><span>Choose where the price will finish after 10 seconds.</span></li>
               <li><strong>Watch your positions.</strong><span>At 0.0s the result may still be settling for up to 10 seconds.</span></li>
             </ol>
-            <p>Maximum profit is 90% of your play amount after the profit fee. A refund is not a win.</p>
+            <p>Profit follows the favorable price move ×1000, capped at 5× your stake before the 10% profit fee. A refund is not a win.</p>
             <button className="dialog-action" onClick={() => setShowHelp(false)} type="button">Got it</button>
           </section>
         </div>

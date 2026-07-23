@@ -12,7 +12,9 @@ import {
 import { readClientLiveConfig } from "@/app/lib/live/client-config";
 import { authorizeErAccess } from "@/app/lib/live/er-access";
 import {
+  applyMarketStreamUpdate,
   applyPositionStreamUpdate,
+  subscribeMarketState,
   subscribeUserPositions,
 } from "@/app/lib/live/position-stream";
 
@@ -55,6 +57,10 @@ export function useGameSnapshot(walletAddress: string | null) {
     key: string;
     message: string;
   } | null>(null);
+  const [marketError, setMarketError] = useState<{
+    key: string;
+    message: string;
+  } | null>(null);
   const [refreshing, setRefreshing] = useState(true);
   const requestInFlight = useRef(false);
   const streamRef = useRef<{
@@ -63,6 +69,10 @@ export function useGameSnapshot(walletAddress: string | null) {
     publishTime: number;
   } | null>(null);
   const positionStreamRef = useRef<{
+    key: string;
+    lastReceivedAt: number;
+  } | null>(null);
+  const marketStreamRef = useRef<{
     key: string;
     lastReceivedAt: number;
   } | null>(null);
@@ -82,6 +92,7 @@ export function useGameSnapshot(walletAddress: string | null) {
         const currentKey = current ? oracleStreamKey(current) : null;
         const nextKey = oracleStreamKey(body);
         const positionStream = positionStreamRef.current;
+        const marketStream = marketStreamRef.current;
         const currentPositionKey = current
           ? positionStreamKeyFor(current, walletAddress)
           : null;
@@ -99,6 +110,7 @@ export function useGameSnapshot(walletAddress: string | null) {
           next = {
             ...next,
             currentPrice: current.currentPrice,
+            currentRawPrice: current.currentRawPrice,
             priceHistory: current.priceHistory,
             feedAgeSeconds: feed.ageSeconds,
             feedHealth: feed.health,
@@ -117,6 +129,22 @@ export function useGameSnapshot(walletAddress: string | null) {
           next = {
             ...next,
             plays: current.plays,
+            notice: current.notice,
+          };
+          preservedStream = true;
+        }
+        if (
+          current &&
+          marketStream &&
+          currentKey === nextKey &&
+          nextKey === marketStream.key &&
+          Date.now() - marketStream.lastReceivedAt <= 5_000
+        ) {
+          next = {
+            ...next,
+            activePositions: current.activePositions,
+            nextPositionNonce: current.nextPositionNonce,
+            marketMode: current.marketMode,
             notice: current.notice,
           };
           preservedStream = true;
@@ -220,6 +248,79 @@ export function useGameSnapshot(walletAddress: string | null) {
       unsubscribe();
     };
   }, [erEndpoint, oracleAddress, oracleFeedId, streamKey, wallet.publicKey, wallet.signMessage]);
+
+  useEffect(() => {
+    if (!streamKey || !erEndpoint || snapshot?.marketId === undefined) {
+      marketStreamRef.current = null;
+      return;
+    }
+    let active = true;
+    let unsubscribe: () => void = () => undefined;
+    const connect = async () => {
+      try {
+        const config = readClientLiveConfig();
+        let streamEndpoint = erEndpoint;
+        let connection: Connection | undefined;
+        if (config.erStreamRpcEndpoint) {
+          if (!wallet.publicKey || !wallet.signMessage) {
+            throw new Error("Connect a message-signing wallet for Market updates");
+          }
+          const access = await authorizeErAccess(
+            config.erStreamRpcEndpoint,
+            config.erStreamWsEndpoint,
+            wallet.publicKey,
+            wallet.signMessage,
+          );
+          streamEndpoint = access.rpcEndpoint;
+          connection = new Connection(access.rpcEndpoint, {
+            commitment: "confirmed",
+            wsEndpoint: access.wsEndpoint,
+          });
+        }
+        if (!active) return;
+        unsubscribe = subscribeMarketState(
+          {
+            erEndpoint: streamEndpoint,
+            programId,
+            marketId: snapshot.marketId,
+          },
+          (update) => {
+            if (!active) return;
+            marketStreamRef.current = {
+              key: streamKey,
+              lastReceivedAt: update.receivedAt,
+            };
+            setSnapshot((current) => current
+              ? applyMarketStreamUpdate(current, update)
+              : current);
+            setMarketError((current) => current?.key === streamKey ? null : current);
+          },
+          (cause) => {
+            if (!active) return;
+            setMarketError({
+              key: streamKey,
+              message: cause instanceof Error ? cause.message : "Market websocket failed",
+            });
+          },
+          connection,
+        );
+      } catch (cause) {
+        if (!active) return;
+        setMarketError({
+          key: streamKey,
+          message: cause instanceof Error ? cause.message : "Market websocket failed",
+        });
+      }
+    };
+    void connect();
+    return () => {
+      active = false;
+      if (marketStreamRef.current?.key === streamKey) {
+        marketStreamRef.current = null;
+      }
+      unsubscribe();
+    };
+  }, [erEndpoint, programId, snapshot?.marketId, streamKey, wallet.publicKey, wallet.signMessage]);
 
   const positionStreamKey = snapshot
     ? positionStreamKeyFor(snapshot, wallet.publicKey?.toBase58() ?? null)
@@ -327,6 +428,7 @@ export function useGameSnapshot(walletAddress: string | null) {
     snapshot,
     error: snapshotError,
     oracleError: oracleError?.key === streamKey ? oracleError.message : null,
+    marketError: marketError?.key === streamKey ? marketError.message : null,
     positionError: positionError?.key === positionStreamKey ? positionError.message : null,
     refreshing,
     refresh,

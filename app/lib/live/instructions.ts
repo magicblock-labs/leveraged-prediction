@@ -1,5 +1,6 @@
 import {
   DELEGATION_PROGRAM_ID,
+  MAGIC_PROGRAM_ID,
   delegationMetadataPdaFromDelegatedAccount,
   delegationRecordPdaFromDelegatedAccount,
 } from "@magicblock-labs/ephemeral-rollups-sdk";
@@ -13,9 +14,15 @@ import type { Direction } from "@/app/lib/domain";
 import { delegationBufferPda } from "@/app/lib/live/pdas";
 import { Buffer } from "buffer";
 
-export const HYDRA_PROGRAM_ID = new PublicKey(
-  "Hydra17i1feui9deaxu6d1TzSQMRNHeBRkDR1Awy7zea",
+const CRANK_PROGRAM_ID = new PublicKey(
+  "Crank11111111111111111111111111111111111111",
 );
+export function crankSignerPda(taskAuthority: PublicKey): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("crank-executor"), taskAuthority.toBuffer()],
+    CRANK_PROGRAM_ID,
+  )[0];
+}
 
 const INITIALIZE_USER_POSITIONS_DISCRIMINATOR = Uint8Array.from([
   6, 119, 238, 168, 19, 38, 23, 113,
@@ -115,7 +122,6 @@ export interface OpenPositionAccounts {
   user: PublicKey;
   sessionSigner: PublicKey;
   sessionToken: PublicKey;
-  taskPayer: PublicKey;
   protocolConfig: PublicKey;
   market: PublicKey;
   userPositions: PublicKey;
@@ -126,7 +132,6 @@ export interface OpenPositionAccounts {
   payoutEscrowTokenAccount: PublicKey;
   collateralMint: PublicKey;
   priceUpdate: PublicKey;
-  hydraCrank: PublicKey;
 }
 
 export function claimFallbackPayoutInstruction(
@@ -187,49 +192,22 @@ export function openPositionInstruction(
     keys: [
       { pubkey: accounts.user, isSigner: false, isWritable: false },
       { pubkey: accounts.sessionSigner, isSigner: true, isWritable: false },
-      { pubkey: accounts.taskPayer, isSigner: true, isWritable: true },
       { pubkey: accounts.protocolConfig, isSigner: false, isWritable: false },
       { pubkey: accounts.market, isSigner: false, isWritable: true },
       { pubkey: accounts.userPositions, isSigner: false, isWritable: true },
       { pubkey: accounts.poolTokenAccount, isSigner: false, isWritable: true },
       { pubkey: accounts.derivedFeeAuthority, isSigner: false, isWritable: false },
-      { pubkey: accounts.feeTokenAccount, isSigner: false, isWritable: false },
+      { pubkey: accounts.feeTokenAccount, isSigner: false, isWritable: true },
       { pubkey: accounts.userTokenAccount, isSigner: false, isWritable: true },
-      { pubkey: accounts.payoutEscrowTokenAccount, isSigner: false, isWritable: false },
+      { pubkey: accounts.payoutEscrowTokenAccount, isSigner: false, isWritable: true },
       { pubkey: accounts.collateralMint, isSigner: false, isWritable: false },
       { pubkey: accounts.priceUpdate, isSigner: false, isWritable: false },
       { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-      { pubkey: accounts.hydraCrank, isSigner: false, isWritable: true },
-      { pubkey: HYDRA_PROGRAM_ID, isSigner: false, isWritable: false },
-      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      { pubkey: crankSignerPda(accounts.market), isSigner: false, isWritable: false },
+      { pubkey: MAGIC_PROGRAM_ID, isSigner: false, isWritable: false },
       { pubkey: accounts.sessionToken, isSigner: false, isWritable: false },
     ],
   });
-}
-
-export async function deriveHydraCrank(
-  market: PublicKey,
-  user: PublicKey,
-  nonce: number,
-  taskSalt: Uint8Array,
-): Promise<PublicKey> {
-  if (taskSalt.length !== 32) throw new Error("taskSalt must contain 32 bytes");
-  const taskSeedInput = concatBytes(
-    new TextEncoder().encode("leveraged_prediction_position"),
-    market.toBytes(),
-    user.toBytes(),
-    u32(nonce),
-    taskSalt,
-  );
-  const digestInput = new ArrayBuffer(taskSeedInput.byteLength);
-  new Uint8Array(digestInput).set(taskSeedInput);
-  const taskSeed = new Uint8Array(
-    await globalThis.crypto.subtle.digest("SHA-256", digestInput),
-  );
-  return PublicKey.findProgramAddressSync(
-    [new TextEncoder().encode("crank"), taskSeed],
-    HYDRA_PROGRAM_ID,
-  )[0];
 }
 
 export const instructionDiscriminators = {

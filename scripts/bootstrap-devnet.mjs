@@ -3,6 +3,9 @@ import {
   delegateEphemeralAtaIx,
   delegateSpl,
   deriveEphemeralAta,
+  deriveRentPda,
+  deriveVault,
+  deriveVaultAta,
   initEphemeralAtaIx,
 } from "@magicblock-labs/ephemeral-rollups-sdk";
 import {
@@ -15,6 +18,7 @@ import {
   mintTo,
 } from "@solana/spl-token";
 import {
+  AddressLookupTableProgram,
   ComputeBudgetProgram,
   Connection,
   Keypair,
@@ -41,6 +45,10 @@ const SPONSOR_LAMPORTS = 1_000_000;
 const DEPLOYMENT_DIR = resolve(".devnet");
 const MINT_KEYPAIR_PATH = resolve(DEPLOYMENT_DIR, "test-usdc-mint-keypair.json");
 const MANIFEST_PATH = resolve(DEPLOYMENT_DIR, "market-1.json");
+const SESSION_SETUP_LOOKUP_TABLE_PATH = resolve(
+  DEPLOYMENT_DIR,
+  "session-setup-lookup-table.json",
+);
 
 function protocolConfigPda() {
   return PublicKey.findProgramAddressSync([Buffer.from("protocol_config")], PROGRAM_ID)[0];
@@ -87,6 +95,83 @@ async function sendTransaction(connection, transaction, payer) {
   const signature = await connection.sendRawTransaction(transaction.serialize(), { skipPreflight: false });
   await connection.confirmTransaction({ signature, ...latest }, "confirmed");
   return signature;
+}
+
+async function ensureSessionSetupLookupTable(connection, admin, addresses) {
+  let lookupTableAddress;
+  try {
+    const stored = JSON.parse(
+      await readFile(SESSION_SETUP_LOOKUP_TABLE_PATH, "utf8"),
+    );
+    lookupTableAddress = new PublicKey(stored.address);
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+
+  let lookupTable = lookupTableAddress
+    ? (await connection.getAddressLookupTable(lookupTableAddress, {
+        commitment: "confirmed",
+      })).value
+    : null;
+  if (!lookupTable) {
+    const recentSlot = await connection.getSlot("finalized");
+    const [createInstruction, derivedAddress] =
+      AddressLookupTableProgram.createLookupTable({
+        authority: admin.publicKey,
+        payer: admin.publicKey,
+        recentSlot,
+      });
+    const signature = await sendTransaction(
+      connection,
+      new Transaction().add(createInstruction),
+      admin,
+    );
+    lookupTableAddress = derivedAddress;
+    console.log(
+      `Created session setup lookup table ${lookupTableAddress}: ${signature}`,
+    );
+    await eventually("session setup lookup table creation", async () => {
+      lookupTable = (await connection.getAddressLookupTable(
+        lookupTableAddress,
+        { commitment: "confirmed" },
+      )).value;
+      return lookupTable !== null;
+    });
+  }
+  if (!lookupTable) throw new Error("Session setup lookup table was not created");
+  if (!lookupTable.state.authority?.equals(admin.publicKey)) {
+    throw new Error("Session setup lookup table has an unexpected authority");
+  }
+
+  const existing = new Set(
+    lookupTable.state.addresses.map((address) => address.toBase58()),
+  );
+  const missing = addresses.filter(
+    (address) => !existing.has(address.toBase58()),
+  );
+  if (missing.length > 0) {
+    const signature = await sendTransaction(
+      connection,
+      new Transaction().add(
+        AddressLookupTableProgram.extendLookupTable({
+          authority: admin.publicKey,
+          payer: admin.publicKey,
+          lookupTable: lookupTableAddress,
+          addresses: missing,
+        }),
+      ),
+      admin,
+    );
+    console.log(
+      `Extended session setup lookup table with ${missing.length} addresses: ${signature}`,
+    );
+  }
+  await writeFile(
+    SESSION_SETUP_LOOKUP_TABLE_PATH,
+    `${JSON.stringify({ address: lookupTableAddress.toBase58() }, null, 2)}\n`,
+    { mode: 0o600 },
+  );
+  return lookupTableAddress;
 }
 
 async function getDelegationStatus(account) {
@@ -187,6 +272,14 @@ if (!mintInfo) {
   }
 }
 const mint = mintKeypair.publicKey;
+const [rentPda] = deriveRentPda();
+const [vault] = deriveVault(mint);
+const vaultAta = deriveVaultAta(mint, vault);
+const sessionSetupLookupTable = await ensureSessionSetupLookupTable(
+  base,
+  admin,
+  [mint, rentPda, vault, vaultAta],
+);
 const adminAta = await getOrCreateAssociatedTokenAccount(base, admin, mint, admin.publicKey, false, "confirmed");
 const [adminEata] = deriveEphemeralAta(admin.publicKey, mint);
 const targetSupply = LIQUIDITY + WALLET_FLOAT;
@@ -360,6 +453,7 @@ const manifest = {
   oracle: BTC_ORACLE.toBase58(),
   oracleFeedId: BTC_FEED_ID.toString("hex"),
   marketId: MARKET_ID,
+  sessionSetupLookupTable: sessionSetupLookupTable.toBase58(),
   accounts: {
     protocolConfig: protocolConfig.toBase58(),
     market: market.toBase58(),

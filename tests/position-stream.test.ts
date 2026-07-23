@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { MarketSnapshot } from "@/app/lib/domain";
 import { accountDiscriminator } from "@/app/lib/live/decode";
 import {
+  applyMarketStreamUpdate,
   applyPositionStreamUpdate,
   subscribeUserPositions,
   type PositionStreamConnection,
@@ -83,6 +84,19 @@ function snapshot(): MarketSnapshot {
 }
 
 describe("routed ER position websocket", () => {
+  it("keeps the hot-path nonce and capacity current from Market updates", () => {
+    const next = applyMarketStreamUpdate(snapshot(), {
+      activePositions: 3,
+      nextPositionNonce: 17,
+      marketMode: "open",
+      receivedAt: 101_000,
+    });
+
+    expect(next.activePositions).toBe(3);
+    expect(next.nextPositionNonce).toBe(17);
+    expect(next.notice).toMatch(/Market/);
+  });
+
   it("streams decoded positions, ignores a late stale read, and removes its listener", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(100_000));
@@ -160,6 +174,8 @@ describe("routed ER position websocket", () => {
       collateralUsd: 2,
       entryPrice: 100,
       status: "active",
+      priceMovePercent: 1,
+      liveProfitUsd: 9,
     });
     expect(next.notice).toMatch(/position websockets connected/);
   });

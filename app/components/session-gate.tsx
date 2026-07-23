@@ -3,20 +3,6 @@
 import { useId, useState } from "react";
 import type { SessionProgress } from "@/app/lib/live/transaction-flow";
 
-const SETUP_STEPS = [
-  { phase: "creating", label: "Session" },
-  { phase: "preparing-accounts", label: "Accounts" },
-  { phase: "depositing", label: "Funds" },
-  { phase: "preparing-fee-payer", label: "Fees" },
-  { phase: "approving", label: "Approval" },
-] as const;
-
-function activeStepIndex(progress: SessionProgress | null, hasStoredSession: boolean): number {
-  if (progress?.phase === "ready") return SETUP_STEPS.length;
-  if (!progress) return hasStoredSession ? 1 : 0;
-  return SETUP_STEPS.findIndex((step) => step.phase === progress.phase);
-}
-
 interface SessionGateProps {
   visible: boolean;
   busy: boolean;
@@ -47,7 +33,6 @@ export function SessionGate({
   const inputId = useId();
   const [allowance, setAllowance] = useState(defaultAllowanceUsd);
   if (!visible) return null;
-  const currentStep = activeStepIndex(progress, hasStoredSession);
 
   return (
     <div className="session-backdrop">
@@ -58,25 +43,9 @@ export function SessionGate({
         </h2>
         <p>
           {hasStoredSession
-            ? "Your session is already created. Continue the remaining setup without creating another one."
+            ? "Your session is saved. Continue setup without creating another one."
             : "Choose the most test USDC this one-hour session may spend. Every play then runs instantly without another wallet prompt."}
         </p>
-        <ol className="session-stepper" aria-label="Session setup progress">
-          {SETUP_STEPS.map((step, index) => {
-            const complete = index < currentStep;
-            const active = index === currentStep;
-            return (
-              <li
-                className={complete ? "complete" : active ? "active" : ""}
-                aria-current={active ? "step" : undefined}
-                key={step.phase}
-              >
-                <span aria-hidden="true">{complete ? "✓" : index + 1}</span>
-                <small>{step.label}</small>
-              </li>
-            );
-          })}
-        </ol>
         <label htmlFor={inputId}>Session spending limit</label>
         <div className="session-allowance">
           <span>$</span>
@@ -126,7 +95,7 @@ export function SessionGate({
           </button>
         ) : null}
         <small className="session-note">
-          The session can move up to your selected limit from this test-USDC play balance.
+          Starting a session authorizes up to your selected test-USDC limit.
           Liquidity and payout controls remain wallet-only.
         </small>
       </section>

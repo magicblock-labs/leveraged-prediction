@@ -2,7 +2,6 @@ import * as anchor from "@coral-xyz/anchor";
 import * as borsh from "@coral-xyz/borsh";
 import {
   DELEGATION_PROGRAM_ID,
-  createDelegateInstruction,
   delegateEphemeralAtaIx,
   delegateSpl,
   delegateBufferPdaFromDelegatedAccountAndOwnerProgram,
@@ -30,11 +29,9 @@ import {
   VersionedTransaction,
   type Signer,
 } from "@solana/web3.js";
-import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import nacl from "tweetnacl";
 import { decodeUserPositions } from "@/app/lib/live/decode";
 import { clearOpenIntent } from "@/app/lib/live/intent-store";
@@ -45,13 +42,16 @@ import { getDelegationStatus, normalizeErEndpoint } from "@/app/lib/live/router"
 import {
   createGameSessionFlow,
   openPositionFlow,
+  prepareOpenPosition,
   type SessionProgress,
   type TransactionProgress,
 } from "@/app/lib/live/transaction-flow";
-import type { StoredGameSession } from "@/app/lib/live/session-store";
+import {
+  sessionKeypair,
+  type StoredGameSession,
+} from "@/app/lib/live/session-store";
 
 const enabled = process.env.LOCAL_E2E === "1";
-const keepLocalServices = process.env.KEEP_LOCAL_SERVICES === "1";
 const suite = enabled ? describe : describe.skip;
 const BASE_RPC = "http://127.0.0.1:8899";
 const ER_RPC = "http://127.0.0.1:7799";
@@ -248,9 +248,6 @@ suite("local wallet-to-settlement flow", () => {
   let userPositions: PublicKey;
   let userTokenAccount: PublicKey;
   let gameSession: StoredGameSession;
-  let cranker: ChildProcess | undefined;
-  let crankerLogs = "";
-  let crankerDirectory = "";
   const signatures: Record<string, string[]> = { base: [], er: [] };
 
   beforeAll(async () => {
@@ -296,17 +293,6 @@ suite("local wallet-to-settlement flow", () => {
     erProgram = new anchor.Program(idl, ephemeralProvider);
     market = marketPda(PROGRAM_ID, MARKET_ID);
     userPositions = userPositionsPda(PROGRAM_ID, admin.publicKey);
-  });
-
-  afterAll(async () => {
-    if (keepLocalServices) {
-      cranker?.stdout?.destroy();
-      cranker?.stderr?.destroy();
-      cranker?.unref();
-      return;
-    }
-    if (cranker && !cranker.killed) cranker.kill("SIGTERM");
-    if (crankerDirectory) await rm(crankerDirectory, { recursive: true, force: true });
   });
 
   it("connects a signer, routes collateral, plays both directions, streams price, and receives payouts", async () => {
@@ -428,39 +414,6 @@ suite("local wallet-to-settlement flow", () => {
       tokenProgram: TOKEN_PROGRAM_ID,
     }).rpc());
 
-    const delegatedCranker = Keypair.generate();
-    const airdrop = await baseConnection.requestAirdrop(delegatedCranker.publicKey, 1_000_000_000);
-    await baseConnection.confirmTransaction(airdrop, "confirmed");
-    signatures.base.push(await sendTransaction(baseConnection, new Transaction().add(
-      SystemProgram.assign({ accountPubkey: delegatedCranker.publicKey, programId: DELEGATION_PROGRAM_ID }),
-      createDelegateInstruction({
-        payer: admin.publicKey,
-        delegatedAccount: delegatedCranker.publicKey,
-        ownerProgram: SystemProgram.programId,
-        validator,
-      }, { validator }),
-    ), admin, [delegatedCranker]));
-    crankerDirectory = await mkdtemp(resolve(tmpdir(), "leveraged-prediction-cranker-"));
-    const crankerPath = resolve(crankerDirectory, "cranker.json");
-    await writeFile(crankerPath, JSON.stringify(Array.from(delegatedCranker.secretKey)), { mode: 0o600 });
-    const crankerBinary = process.env.HYDRA_CRANKER_BIN;
-    if (!crankerBinary) throw new Error("HYDRA_CRANKER_BIN is required");
-    cranker = spawn(crankerBinary, [
-      "--rpc-url", ER_RPC,
-      "--ws-url", ER_WS,
-      "--keypair", crankerPath,
-      "--prometheus-port", "9898",
-    ], { detached: keepLocalServices, stdio: ["ignore", "pipe", "pipe"] });
-    if (process.env.LOCAL_HYDRA_PID_FILE && cranker.pid) {
-      await writeFile(process.env.LOCAL_HYDRA_PID_FILE, String(cranker.pid));
-    }
-    cranker.stdout?.on("data", (data) => { crankerLogs += String(data); });
-    cranker.stderr?.on("data", (data) => { crankerLogs += String(data); });
-    await eventually("Hydra cranker health", async () => {
-      const response = await fetch("http://127.0.0.1:9898/healthz").catch(() => null);
-      return response?.ok ?? false;
-    });
-
     let walletSignCount = 0;
     const walletSign = async <T extends Transaction | VersionedTransaction>(
       transaction: T,
@@ -507,6 +460,12 @@ suite("local wallet-to-settlement flow", () => {
     expect(resumedProgress).toHaveLength(1);
     expect(resumedProgress.at(-1)?.phase).toBe("ready");
     const walletSignCountBeforePlay = walletSignCount;
+    expect(walletSignCountBeforePlay).toBe(2);
+    const sessionSignerInfo = await baseConnection.getAccountInfo(
+      sessionKeypair(gameSession).publicKey,
+      "confirmed",
+    );
+    expect(sessionSignerInfo?.owner.equals(DELEGATION_PROGRAM_ID) ?? false).toBe(false);
     const progress: TransactionProgress[] = [];
     const play = async (direction: "up" | "down", entryPrice: number, settlementPrice: number) => {
       signatures.er.push(await sendTransaction(erConnection, new Transaction().add(
@@ -531,11 +490,22 @@ suite("local wallet-to-settlement flow", () => {
       })();
       let result: Awaited<ReturnType<typeof openPositionFlow>>;
       try {
+        const quote = await readLiveSnapshot(admin.publicKey.toBase58());
+        const prepared = await prepareOpenPosition(
+          admin.publicKey,
+          gameSession,
+          quote,
+        );
         result = await openPositionFlow(
           admin.publicKey,
           direction,
           PLAY_USD,
           gameSession,
+          prepared,
+          {
+            rawPrice: quote.currentRawPrice!,
+            nextPositionNonce: quote.nextPositionNonce!,
+          },
           (update) => progress.push(update),
         );
       } finally {
@@ -556,6 +526,10 @@ suite("local wallet-to-settlement flow", () => {
       expect(walletSignCount).toBe(walletSignCountBeforePlay);
       expect(result.intent.erSignature).toBeTruthy();
       signatures.er.push(result.intent.erSignature!);
+      await eventually(
+        "submitted position visibility",
+        async () => (await positions(erConnection, userPositions)).length === 1,
+      );
       const opened = await positions(erConnection, userPositions);
       expect(opened).toHaveLength(1);
       expect(opened[0].direction).toBe(direction);
@@ -612,11 +586,11 @@ suite("local wallet-to-settlement flow", () => {
         } : null)}`);
       }
       expect(observedPrice).toBe(BigInt(settlementPrice));
-      try {
-        await eventually("automatic Hydra settlement", async () => (await positions(erConnection, userPositions)).length === 0, 160);
-      } catch (error) {
-        throw new Error(`${String(error)}\nHydra logs:\n${crankerLogs.slice(-4_000)}`);
-      }
+      await eventually(
+        "automatic scheduler settlement",
+        async () => (await positions(erConnection, userPositions)).length === 0,
+        160,
+      );
       const afterBalance = (await getAccount(erConnection, userTokenAccount, "confirmed")).amount;
       expect(afterBalance).toBeGreaterThan(beforeBalance);
       clearOpenIntent(admin.publicKey.toBase58(), MARKET_ID);
@@ -632,8 +606,7 @@ suite("local wallet-to-settlement flow", () => {
     expect(sessionProgress.some((update) => update.phase === "preparing-accounts")).toBe(true);
     expect(sessionProgress.some((update) => update.phase === "approving")).toBe(true);
     expect(sessionProgress.at(-1)?.phase).toBe("ready");
-    expect(progress.filter((update) => update.phase === "accepted")).toHaveLength(2);
-    expect(cranker?.exitCode).toBeNull();
+    expect(progress.filter((update) => update.phase === "confirming")).toHaveLength(2);
 
     console.log(JSON.stringify({
       wallet: admin.publicKey.toBase58(),
@@ -644,8 +617,7 @@ suite("local wallet-to-settlement flow", () => {
       sessionPhases: sessionProgress.map((update) => update.phase),
       phases: progress.map((update) => update.phase),
       finalBalanceUsd: finalSnapshot.walletBalanceUsd,
-      crankerHealthy: !cranker?.killed && cranker?.exitCode === null,
-      crankerLogLines: crankerLogs.trim().split("\n").filter(Boolean).length,
+      scheduler: "magicblock-native",
     }, null, 2));
   }, 180_000);
 });

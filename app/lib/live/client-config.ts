@@ -6,6 +6,7 @@ export interface ClientLiveConfig {
   routerEndpoint: string;
   erStreamRpcEndpoint?: string;
   erStreamWsEndpoint?: string;
+  sessionSetupLookupTable?: PublicKey;
   programId: PublicKey;
   marketId: number;
 }
@@ -27,6 +28,9 @@ export function readClientLiveConfig(): ClientLiveConfig {
       "https://devnet-router.magicblock.app/",
     erStreamRpcEndpoint: process.env.NEXT_PUBLIC_ER_STREAM_RPC_ENDPOINT,
     erStreamWsEndpoint: process.env.NEXT_PUBLIC_ER_STREAM_WS_ENDPOINT,
+    sessionSetupLookupTable: process.env.NEXT_PUBLIC_SESSION_SETUP_LOOKUP_TABLE
+      ? new PublicKey(process.env.NEXT_PUBLIC_SESSION_SETUP_LOOKUP_TABLE)
+      : undefined,
     programId: new PublicKey(
       process.env.NEXT_PUBLIC_LEVERAGED_PREDICTION_PROGRAM_ID ??
         DEFAULT_PROGRAM_ID,

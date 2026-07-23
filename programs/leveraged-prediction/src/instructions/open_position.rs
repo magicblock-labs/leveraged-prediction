@@ -1,4 +1,8 @@
 use super::*;
+use anchor_lang::solana_program::{
+    instruction::{AccountMeta, Instruction},
+    program::invoke_signed,
+};
 use anchor_lang::solana_program::program_option::COption;
 use session_keys::{SessionTokenV2, SessionV2};
 
@@ -11,7 +15,10 @@ pub fn handler(
     min_entry_price: i64,
     max_entry_price: i64,
 ) -> Result<()> {
-    require!(task_salt != [0_u8; 32], ErrorCode::InvalidHydraCrank);
+    require!(
+        task_salt != [0_u8; 32],
+        ErrorCode::InvalidSettlementTask
+    );
     require!(
         ctx.accounts.market.mode == MarketMode::Open,
         ErrorCode::MarketCloseOnly
@@ -77,94 +84,75 @@ pub fn handler(
         SAFETY_BUFFER_BPS,
     )?;
 
-    let task_seed = hydra_task_seed(
-        ctx.accounts.market.key(),
-        ctx.accounts.user.key(),
+    let scheduled_instruction = settlement_instruction(
+        crate::accounts::SettlePosition {
+            user: ctx.accounts.user.key(),
+            protocol_config: ctx.accounts.protocol_config.key(),
+            market: ctx.accounts.market.key(),
+            user_positions: ctx.accounts.user_positions.key(),
+            pool_token_account: ctx.accounts.pool_token_account.key(),
+            user_token_account: ctx.accounts.user_token_account.key(),
+            payout_escrow_token_account: ctx.accounts.payout_escrow_token_account.key(),
+            derived_fee_authority: ctx.accounts.derived_fee_authority.key(),
+            fee_token_account: ctx.accounts.fee_token_account.key(),
+            collateral_mint: ctx.accounts.collateral_mint.key(),
+            price_update: ctx.accounts.price_update.key(),
+            token_program: ctx.accounts.token_program.key(),
+            crank_signer: ctx.accounts.crank_signer.key(),
+        },
         nonce,
         task_salt,
-    );
-    let scheduled_data = crate::instruction::SettlePosition { nonce, task_salt }.data();
-    let scheduled_metas = settle_position_schedule_metas(crate::accounts::SettlePosition {
-        user: ctx.accounts.user.key(),
-        protocol_config: ctx.accounts.protocol_config.key(),
-        market: ctx.accounts.market.key(),
-        user_positions: ctx.accounts.user_positions.key(),
-        pool_token_account: ctx.accounts.pool_token_account.key(),
-        user_token_account: ctx.accounts.user_token_account.key(),
-        payout_escrow_token_account: ctx.accounts.payout_escrow_token_account.key(),
-        derived_fee_authority: ctx.accounts.derived_fee_authority.key(),
-        fee_token_account: ctx.accounts.fee_token_account.key(),
-        collateral_mint: ctx.accounts.collateral_mint.key(),
-        price_update: ctx.accounts.price_update.key(),
-        token_program: ctx.accounts.token_program.key(),
-        instructions_sysvar: Instructions::id(),
-    })?;
-    let scheduled = [ScheduledIx {
-        program_id: crate::ID,
-        metas: &scheduled_metas,
-        data: &scheduled_data,
-    }];
-    let task_args = HydraCreateArgs {
-        seed: task_seed,
-        authority: ctx.accounts.task_payer.key().to_bytes(),
-        start_slot: clock
-            .slot
-            .checked_add(HYDRA_FIRST_ATTEMPT_DELAY_SLOTS)
-            .ok_or(ErrorCode::MathOverflow)?,
-        interval_slots: HYDRA_INTERVAL_SLOTS,
-        remaining: HYDRA_REMAINING_ATTEMPTS,
-        priority_tip: 0,
-        cu_limit: HYDRA_COMPUTE_UNIT_LIMIT,
-        scheduled: &scheduled,
-    };
-    let allocation_region_len = CREATE_IX_HEADER_LEN
-        .checked_add(
-            SERIALIZED_META_SIZE
-                .checked_mul(scheduled_metas.len())
-                .ok_or(ErrorCode::MathOverflow)?,
-        )
-        .and_then(|value| value.checked_add(scheduled_data.len()))
-        .and_then(|value| value.checked_add(MAX_INSTRUCTIONS))
-        .ok_or(ErrorCode::MathOverflow)?;
-    let task_rent = Rent::get()?.minimum_balance(crank_account_size(allocation_region_len));
-    let reward_budget = HYDRA_REMAINING_ATTEMPTS
-        .checked_add(1)
-        .and_then(|attempts| attempts.checked_mul(HYDRA_CRANKER_REWARD))
-        .ok_or(ErrorCode::MathOverflow)?;
-    let task_cost = task_rent
-        .checked_add(reward_budget)
-        .ok_or(ErrorCode::MathOverflow)?;
-    require!(
-        ctx.accounts.task_payer.lamports() >= task_cost,
-        ErrorCode::InsufficientHydraTaskLamports
-    );
-    transfer_lamports(
-        CpiContext::new(
-            ctx.accounts.system_program.key(),
-            LamportsTransfer {
-                from: ctx.accounts.task_payer.to_account_info(),
-                to: ctx.accounts.hydra_crank.to_account_info(),
-            },
-        ),
-        task_rent,
     )?;
-    hydra_cpi::create(
-        &ctx.accounts.task_payer.to_account_info(),
-        &ctx.accounts.hydra_crank.to_account_info(),
-        &ctx.accounts.system_program.to_account_info(),
-        &task_args,
+    let settlement_accounts = [
+        ctx.accounts.user.to_account_info(),
+        ctx.accounts.protocol_config.to_account_info(),
+        ctx.accounts.market.to_account_info(),
+        ctx.accounts.user_positions.to_account_info(),
+        ctx.accounts.pool_token_account.to_account_info(),
+        ctx.accounts.user_token_account.to_account_info(),
+        ctx.accounts.payout_escrow_token_account.to_account_info(),
+        ctx.accounts.derived_fee_authority.to_account_info(),
+        ctx.accounts.fee_token_account.to_account_info(),
+        ctx.accounts.collateral_mint.to_account_info(),
+        ctx.accounts.price_update.to_account_info(),
+        ctx.accounts.token_program.to_account_info(),
+        ctx.accounts.crank_signer.to_account_info(),
+    ];
+    let market_id = ctx.accounts.market.market_id.to_le_bytes();
+    let market_bump = [ctx.accounts.market.bump];
+    let market_signer_seeds: &[&[u8]] = &[MARKET_SEED, market_id.as_ref(), &market_bump];
+    let schedule_data = bincode::serialize(&MagicBlockInstruction::ScheduleTask(
+        ScheduleTaskArgs {
+            task_id: settlement_task_id(
+                ctx.accounts.market.key(),
+                ctx.accounts.user.key(),
+                nonce,
+                task_salt,
+            ),
+            execution_interval_millis: SETTLEMENT_TASK_INTERVAL_MILLIS,
+            iterations: SETTLEMENT_TASK_ITERATIONS,
+            instructions: vec![scheduled_instruction],
+        },
+    ))
+    .map_err(|_| error!(ErrorCode::SettlementTaskCreationFailed))?;
+    let mut schedule_metas = Vec::with_capacity(1 + settlement_accounts.len());
+    schedule_metas.push(AccountMeta::new(ctx.accounts.market.key(), true));
+    schedule_metas.extend(settlement_accounts.iter().map(|account| AccountMeta {
+        pubkey: account.key(),
+        is_signer: account.is_signer,
+        is_writable: account.is_writable,
+    }));
+    let schedule_instruction =
+        Instruction::new_with_bytes(MAGIC_PROGRAM_ID, &schedule_data, schedule_metas);
+    let mut schedule_accounts = Vec::with_capacity(1 + settlement_accounts.len());
+    schedule_accounts.push(ctx.accounts.market.to_account_info());
+    schedule_accounts.extend(settlement_accounts);
+    invoke_signed(
+        &schedule_instruction,
+        &schedule_accounts,
+        &[market_signer_seeds],
     )
-    .map_err(|_| error!(ErrorCode::HydraTaskCreationFailed))?;
-    transfer_lamports(
-        CpiContext::new(
-            ctx.accounts.system_program.key(),
-            LamportsTransfer {
-                from: ctx.accounts.task_payer.to_account_info(),
-                to: ctx.accounts.hydra_crank.to_account_info(),
-            },
-        ),
-        reward_budget,
-    )?;
+    .map_err(|_| error!(ErrorCode::SettlementTaskCreationFailed))?;
 
     token::transfer(
         CpiContext::new(
@@ -220,21 +208,25 @@ fn require_session_token_delegate(
     Ok(())
 }
 
-fn settle_position_schedule_metas(
+fn settlement_instruction(
     accounts: crate::accounts::SettlePosition,
-) -> Result<Vec<SchedMeta>> {
-    accounts
-        .to_account_metas(None)
-        .into_iter()
-        .map(|meta| {
-            require!(!meta.is_signer, ErrorCode::InvalidHydraCrank);
-            Ok(if meta.is_writable {
-                SchedMeta::writable(meta.pubkey)
-            } else {
-                SchedMeta::readonly(meta.pubkey)
-            })
-        })
-        .collect()
+    nonce: u32,
+    task_salt: [u8; 32],
+) -> Result<Instruction> {
+    let crank_signer = accounts.crank_signer;
+    let metas = accounts.to_account_metas(None);
+    require!(
+        metas
+            .iter()
+            .filter(|meta| meta.is_signer)
+            .all(|meta| meta.pubkey == crank_signer && !meta.is_writable),
+        ErrorCode::InvalidSettlementTask
+    );
+    Ok(Instruction {
+        program_id: crate::ID,
+        accounts: metas,
+        data: crate::instruction::SettlePosition { nonce, task_salt }.data(),
+    })
 }
 
 #[derive(Accounts, SessionV2)]
@@ -243,8 +235,6 @@ pub struct OpenPosition<'info> {
     /// CHECK: Wallet authority bound to UserPositions, the session token, and the token account.
     pub user: UncheckedAccount<'info>,
     pub session_signer: Signer<'info>,
-    #[account(mut)]
-    pub task_payer: Signer<'info>,
     #[account(seeds = [CONFIG_SEED], bump = protocol_config.bump, has_one = collateral_mint)]
     pub protocol_config: Box<Account<'info, ProtocolConfig>>,
     #[account(mut, seeds = [MARKET_SEED, &market.market_id.to_le_bytes()], bump = market.bump)]
@@ -256,7 +246,7 @@ pub struct OpenPosition<'info> {
     /// CHECK: Canonical zero-data PDA used by the scheduled settlement instruction.
     #[account(seeds = [FEE_AUTHORITY_SEED, market.key().as_ref()], bump)]
     pub derived_fee_authority: UncheckedAccount<'info>,
-    #[account(associated_token::mint = collateral_mint, associated_token::authority = derived_fee_authority)]
+    #[account(mut, associated_token::mint = collateral_mint, associated_token::authority = derived_fee_authority)]
     pub fee_token_account: Box<Account<'info, TokenAccount>>,
     #[account(
         mut,
@@ -264,20 +254,21 @@ pub struct OpenPosition<'info> {
         constraint = user_token_account.mint == collateral_mint.key() @ ErrorCode::TokenMintMismatch
     )]
     pub user_token_account: Box<Account<'info, TokenAccount>>,
-    #[account(associated_token::mint = collateral_mint, associated_token::authority = user_positions)]
+    #[account(mut, associated_token::mint = collateral_mint, associated_token::authority = user_positions)]
     pub payout_escrow_token_account: Box<Account<'info, TokenAccount>>,
     pub collateral_mint: Box<Account<'info, Mint>>,
     /// CHECK: Canonical address is constrained here; payload and owner are parsed in the handler.
     #[account(address = market.oracle)]
     pub price_update: UncheckedAccount<'info>,
     pub token_program: Program<'info, Token>,
-    /// CHECK: Address is derived from the Market, user, position nonce, and task salt.
-    #[account(mut, address = hydra_crank_address(market.key(), user.key(), nonce, task_salt) @ ErrorCode::InvalidHydraCrank)]
-    pub hydra_crank: UncheckedAccount<'info>,
-    /// CHECK: Canonical consolidated Hydra program deployed on the target ER.
-    #[account(address = HYDRA_PROGRAM_ID, executable)]
-    pub hydra_program: UncheckedAccount<'info>,
-    pub system_program: Program<'info, System>,
+    /// CHECK: Canonical signer added by the native scheduler when it executes the task.
+    #[account(
+        address = settlement_crank_signer(market.key()) @ ErrorCode::InvalidSettlementTask
+    )]
+    pub crank_signer: UncheckedAccount<'info>,
+    /// CHECK: Canonical native MagicBlock program on every Ephemeral Rollup.
+    #[account(address = MAGIC_PROGRAM_ID, executable)]
+    pub magic_program: UncheckedAccount<'info>,
     #[session(signer = session_signer, authority = user.key())]
     pub session_token: Option<Account<'info, SessionTokenV2>>,
 }
@@ -302,17 +293,28 @@ mod tests {
             collateral_mint: keys[9],
             price_update: keys[10],
             token_program: keys[11],
-            instructions_sysvar: keys[12],
+            crank_signer: keys[12],
         };
         let expected = generated.to_account_metas(None);
-        assert!(expected.iter().all(|meta| !meta.is_signer));
+        assert_eq!(
+            expected
+                .iter()
+                .filter(|meta| meta.is_signer)
+                .map(|meta| meta.pubkey)
+                .collect::<Vec<_>>(),
+            vec![keys[12]]
+        );
 
-        let actual = settle_position_schedule_metas(generated).unwrap();
-        assert_eq!(actual.len(), expected.len());
-        for (actual, expected) in actual.iter().zip(expected) {
-            assert_eq!(actual.pubkey, expected.pubkey);
-            assert_eq!(actual.is_writable, expected.is_writable);
-        }
+        let actual = settlement_instruction(generated, 7, [1_u8; 32]).unwrap();
+        assert_eq!(actual.accounts, expected);
+        assert_eq!(
+            actual.data,
+            crate::instruction::SettlePosition {
+                nonce: 7,
+                task_salt: [1_u8; 32]
+            }
+            .data()
+        );
     }
 
     #[test]

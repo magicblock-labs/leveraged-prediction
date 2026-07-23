@@ -8,7 +8,6 @@ export interface StoredGameSession {
   programId: string;
   sessionToken: string;
   sessionSignerSecret: number[];
-  erFeePayerSecret: number[];
   allowanceMinor: string;
   validUntil: number;
   setupComplete: boolean;
@@ -22,13 +21,6 @@ export function sessionKeypair(session: StoredGameSession): Keypair {
   return keypairFromStoredSecret(
     session.sessionSignerSecret,
     "Stored session signer is invalid",
-  );
-}
-
-export function sessionFeePayer(session: StoredGameSession): Keypair {
-  return keypairFromStoredSecret(
-    session.erFeePayerSecret,
-    "Stored session fee payer is invalid",
   );
 }
 
@@ -58,21 +50,22 @@ export function validateStoredSessionShape(
     typeof session.allowanceMinor !== "string" ||
     typeof session.validUntil !== "number" ||
     (session.setupComplete !== undefined && typeof session.setupComplete !== "boolean") ||
-    !Array.isArray(session.sessionSignerSecret) ||
-    (session.erFeePayerSecret !== undefined && !Array.isArray(session.erFeePayerSecret))
+    !Array.isArray(session.sessionSignerSecret)
   ) return null;
   try {
     const keypair = sessionKeypair(session as StoredGameSession);
-    const hasFeePayer = Array.isArray(session.erFeePayerSecret);
-    if (hasFeePayer) sessionFeePayer(session as StoredGameSession);
     new PublicKey(session.sessionToken);
     BigInt(session.allowanceMinor);
     if (session.validUntil <= 0 || keypair.publicKey.equals(PublicKey.default)) return null;
     return {
-      ...(session as StoredGameSession),
-      erFeePayerSecret: hasFeePayer ? session.erFeePayerSecret! : [],
-      setupComplete: hasFeePayer && (session.setupComplete ?? true),
-    };
+      user: session.user,
+      programId: session.programId,
+      sessionToken: session.sessionToken,
+      sessionSignerSecret: session.sessionSignerSecret,
+      allowanceMinor: session.allowanceMinor,
+      validUntil: session.validUntil,
+      setupComplete: session.setupComplete ?? false,
+    } as StoredGameSession;
   } catch {
     return null;
   }

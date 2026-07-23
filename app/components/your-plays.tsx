@@ -75,12 +75,14 @@ export function YourPlays({ plays, now, capacity, fallbackClaimableUsd = 0, clai
                       <strong>${play.payoutUsd.toFixed(2)}</strong>
                       <span>Payout</span>
                     </>
-                  ) : play.estimateUsd !== undefined && !finished ? (
+                  ) : play.priceMovePercent !== undefined && play.liveProfitUsd !== undefined && !finished ? (
                     <>
-                      <strong className={play.estimateUsd >= 0 ? "positive" : "negative"}>
-                        {play.estimateUsd >= 0 ? "+" : "−"}${Math.abs(play.estimateUsd).toFixed(2)}
+                      <strong className={play.priceMovePercent >= 0 ? "positive" : "negative"}>
+                        {play.priceMovePercent >= 0 ? "+" : "−"}{Math.abs(play.priceMovePercent).toFixed(3)}%
                       </strong>
-                      <span>Estimate</span>
+                      <span className={play.liveProfitUsd >= 0 ? "positive" : "negative"}>
+                        {play.liveProfitUsd >= 0 ? "+" : "−"}${Math.abs(play.liveProfitUsd).toFixed(2)} live P&amp;L
+                      </span>
                     </>
                   ) : (
                     <strong>—</strong>

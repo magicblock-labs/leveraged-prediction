@@ -2,12 +2,11 @@ import { describe, expect, it } from "vitest";
 import { PublicKey } from "@solana/web3.js";
 import {
   claimFallbackPayoutInstruction,
+  crankSignerPda,
   delegateUserPositionsInstruction,
-  deriveHydraCrank,
   instructionDiscriminators,
   openPositionInstruction,
 } from "@/app/lib/live/instructions";
-import { marketPda } from "@/app/lib/live/pdas";
 
 const PROGRAM_ID = new PublicKey("AcvFWjSFrLAAWMynqQmBxeBe8wHRTVhhHtB6byatQLFr");
 
@@ -47,25 +46,23 @@ describe("final ABI write builders", () => {
   });
 
   it("encodes open_position arguments and exact account count", () => {
-    const keys = Array.from({ length: 15 }, (_, index) => new PublicKey(Uint8Array.from({ length: 32 }, () => index + 1)));
+    const keys = Array.from({ length: 13 }, (_, index) => new PublicKey(Uint8Array.from({ length: 32 }, () => index + 1)));
     const instruction = openPositionInstruction(
       PROGRAM_ID,
       {
         user: keys[0],
         sessionSigner: keys[1],
         sessionToken: keys[2],
-        taskPayer: keys[3],
-        protocolConfig: keys[4],
-        market: keys[5],
-        userPositions: keys[6],
-        poolTokenAccount: keys[7],
-        derivedFeeAuthority: keys[8],
-        feeTokenAccount: keys[9],
-        userTokenAccount: keys[10],
-        payoutEscrowTokenAccount: keys[11],
-        collateralMint: keys[12],
-        priceUpdate: keys[13],
-        hydraCrank: keys[14],
+        protocolConfig: keys[3],
+        market: keys[4],
+        userPositions: keys[5],
+        poolTokenAccount: keys[6],
+        derivedFeeAuthority: keys[7],
+        feeTokenAccount: keys[8],
+        userTokenAccount: keys[9],
+        payoutEscrowTokenAccount: keys[10],
+        collateralMint: keys[11],
+        priceUpdate: keys[12],
       },
       {
         nonce: 17,
@@ -77,13 +74,17 @@ describe("final ABI write builders", () => {
       },
     );
 
-    expect(instruction.keys).toHaveLength(18);
+    expect(instruction.keys).toHaveLength(16);
     expect(instruction.keys[0]).toMatchObject({ isSigner: false, isWritable: false });
     expect(instruction.keys[1]).toMatchObject({ isSigner: true, isWritable: false });
-    expect(instruction.keys[2]).toMatchObject({ isSigner: true, isWritable: true });
-    expect(instruction.keys[8]).toMatchObject({ isSigner: false, isWritable: false });
-    expect(instruction.keys[10]).toMatchObject({ isSigner: false, isWritable: false });
-    expect(instruction.keys[17]).toMatchObject({ pubkey: keys[2], isSigner: false, isWritable: false });
+    expect(instruction.keys[7]).toMatchObject({ isSigner: false, isWritable: true });
+    expect(instruction.keys[9]).toMatchObject({ isSigner: false, isWritable: true });
+    expect(instruction.keys[13]).toMatchObject({
+      pubkey: crankSignerPda(keys[4]),
+      isSigner: false,
+      isWritable: false,
+    });
+    expect(instruction.keys[15]).toMatchObject({ pubkey: keys[2], isSigner: false, isWritable: false });
     expect(instruction.data.subarray(0, 8)).toEqual(Buffer.from(instructionDiscriminators.openPosition));
     expect(instruction.data.readUInt32LE(8)).toBe(17);
     expect(instruction.data.subarray(12, 44)).toEqual(Buffer.alloc(32, 9));
@@ -93,12 +94,9 @@ describe("final ABI write builders", () => {
     expect(instruction.data.readBigInt64LE(61)).toBe(11_900_000_000_000n);
   });
 
-  it("matches the Rust Hydra crank derivation vector", async () => {
-    const market = marketPda(PROGRAM_ID, 1);
-    const user = new PublicKey("11111111111111111111111111111112");
-    const crank = await deriveHydraCrank(market, user, 7, Buffer.alloc(32, 1));
-    expect(market.toBase58()).toBe("6ME7jFHJkk27zAM7hz2A3V1Y4EeTkcjyZxnekQLtn8V1");
-    expect(crank.toBase58()).toBe("6eK97Qn52NaBP8RJYUgUEGFJqoVoKEckqtaemEKF3ZZQ");
+  it("derives the canonical MagicBlock scheduler signer", () => {
+    const market = new PublicKey("6ME7jFHJkk27zAM7hz2A3V1Y4EeTkcjyZxnekQLtn8V1");
+    expect(crankSignerPda(market).toBase58()).toBe("BLfDLg2Sv4wrbRaNb6sZv6wWvrg1BpaDArW5FaoricW1");
   });
 
   it("rejects a zero task salt before a wallet can sign", () => {
@@ -107,7 +105,6 @@ describe("final ABI write builders", () => {
       user: key,
       sessionSigner: key,
       sessionToken: key,
-      taskPayer: key,
       protocolConfig: key,
       market: key,
       userPositions: key,
@@ -118,7 +115,6 @@ describe("final ABI write builders", () => {
       payoutEscrowTokenAccount: key,
       collateralMint: key,
       priceUpdate: key,
-      hydraCrank: key,
     }, {
       nonce: 0,
       taskSalt: new Uint8Array(32),
