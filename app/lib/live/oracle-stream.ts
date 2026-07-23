@@ -20,7 +20,8 @@ import {
 
 const COMMITMENT: Commitment = "confirmed";
 const HISTORY_WINDOW_MS = 45_000;
-const MAX_HISTORY_POINTS = 120;
+const HISTORY_SAMPLE_MS = 100;
+const MAX_HISTORY_POINTS = Math.ceil(HISTORY_WINDOW_MS / HISTORY_SAMPLE_MS) + 2;
 
 export interface OracleStreamUpdate extends OraclePrice {
   receivedAt: number;
@@ -57,13 +58,36 @@ export function appendOraclePrice(
   update: Pick<OracleStreamUpdate, "displayPrice" | "receivedAt">,
 ): PricePoint[] {
   const nextPoint = { price: update.displayPrice, timestamp: update.receivedAt };
-  const last = history.at(-1);
-  const next = last?.timestamp === nextPoint.timestamp
-    ? [...history.slice(0, -1), nextPoint]
-    : [...history, nextPoint];
-  return next
-    .filter((point) => point.timestamp >= update.receivedAt - HISTORY_WINDOW_MS)
-    .slice(-MAX_HISTORY_POINTS);
+  return mergeOraclePriceHistory(history, [nextPoint], update.receivedAt);
+}
+
+export function mergeOraclePriceHistory(
+  current: PricePoint[],
+  incoming: PricePoint[],
+  now: number,
+): PricePoint[] {
+  const cutoff = now - HISTORY_WINDOW_MS;
+  const sorted = [...current, ...incoming]
+    .filter((point) =>
+      Number.isFinite(point.price) &&
+      Number.isFinite(point.timestamp) &&
+      point.timestamp >= cutoff
+    )
+    .sort((left, right) => left.timestamp - right.timestamp);
+  const sampled: PricePoint[] = [];
+  for (const point of sorted) {
+    const previous = sampled.at(-1);
+    if (
+      previous &&
+      Math.floor(previous.timestamp / HISTORY_SAMPLE_MS) ===
+        Math.floor(point.timestamp / HISTORY_SAMPLE_MS)
+    ) {
+      sampled[sampled.length - 1] = point;
+    } else {
+      sampled.push(point);
+    }
+  }
+  return sampled.slice(-MAX_HISTORY_POINTS);
 }
 
 export function feedHealthAt(publishTime: number, now: number): {

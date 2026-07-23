@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { MarketSnapshot, Play } from "@/app/lib/domain";
 import {
+  CHART_PAST_MS,
+  CHART_WINDOW_MS,
   createChartGeometry,
   nicePriceStep,
   type ChartViewport,
@@ -29,7 +31,10 @@ interface ChartTheme {
   wait: number;
 }
 
-const TIME_TICK_OFFSETS = [-20_000, -10_000, 0, 10_000, 20_000];
+const TIME_TICK_OFFSETS = Array.from(
+  { length: 4 },
+  (_, index) => -CHART_PAST_MS + index * (CHART_WINDOW_MS / 3),
+);
 
 function cssColor(styles: CSSStyleDeclaration, name: string): number {
   const value = styles.getPropertyValue(name).trim();
@@ -60,7 +65,9 @@ export function PriceArena({ snapshot, plays, now }: PriceArenaProps) {
   const dataRef = useRef({ snapshot, plays, now });
   const [following, setFollowing] = useState(true);
   const [priceLabels, setPriceLabels] = useState<AxisLabel[]>([]);
-  const [timeLabels, setTimeLabels] = useState(["−20s", "−10s", "now", "+10s", "+20s"]);
+  const [timeLabels, setTimeLabels] = useState(() =>
+    TIME_TICK_OFFSETS.map(formatTimeOffset)
+  );
   const followingRef = useRef(true);
   const viewportRef = useRef<ChartViewport>({ x: 0, y: 0 });
 
@@ -163,7 +170,7 @@ export function PriceArena({ snapshot, plays, now }: PriceArenaProps) {
 
         // time gridlines
         const timeTickXs = TIME_TICK_OFFSETS.map((offset) =>
-          geometry.plotLeft + ((offset + 20_000) / 40_000) * geometry.plotWidth
+          geometry.plotLeft + ((offset + CHART_PAST_MS) / CHART_WINDOW_MS) * geometry.plotWidth
         );
         for (const tickX of timeTickXs) {
           graphics.moveTo(tickX, geometry.plotTop)

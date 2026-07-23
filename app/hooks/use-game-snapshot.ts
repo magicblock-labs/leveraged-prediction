@@ -7,6 +7,7 @@ import type { MarketSnapshot, SnapshotError } from "@/app/lib/domain";
 import {
   applyOracleStreamUpdate,
   feedHealthAt,
+  mergeOraclePriceHistory,
   subscribeOraclePrice,
 } from "@/app/lib/live/oracle-stream";
 import { readClientLiveConfig } from "@/app/lib/live/client-config";
@@ -99,6 +100,17 @@ export function useGameSnapshot(walletAddress: string | null) {
         const nextPositionKey = positionStreamKeyFor(body, walletAddress);
         let next = body;
         let preservedStream = false;
+        if (current && currentKey === nextKey) {
+          next = {
+            ...next,
+            priceHistory: mergeOraclePriceHistory(
+              current.priceHistory,
+              body.priceHistory,
+              Date.now(),
+            ),
+          };
+          preservedStream = true;
+        }
         if (
           current &&
           stream &&
@@ -111,7 +123,6 @@ export function useGameSnapshot(walletAddress: string | null) {
             ...next,
             currentPrice: current.currentPrice,
             currentRawPrice: current.currentRawPrice,
-            priceHistory: current.priceHistory,
             feedAgeSeconds: feed.ageSeconds,
             feedHealth: feed.health,
             capturedAt: current.capturedAt,
