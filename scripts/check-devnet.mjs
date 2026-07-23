@@ -8,7 +8,7 @@ import { Connection, Keypair, PublicKey } from "@solana/web3.js";
 const BASE_RPC = process.env.SOLANA_RPC_ENDPOINT ?? "https://rpc.magicblock.app/devnet";
 const ER_RPC = process.env.EPHEMERAL_RPC_ENDPOINT ?? "https://devnet-as.magicblock.app";
 const PROGRAM_ID = new PublicKey("AcvFWjSFrLAAWMynqQmBxeBe8wHRTVhhHtB6byatQLFr");
-const HYDRA_PROGRAM_ID = new PublicKey("eHyd5BU8QffvHi4GnXwxrK4WpS7pM2x9UGKHBWii7mf");
+const HYDRA_PROGRAM_ID = new PublicKey("Hydra17i1feui9deaxu6d1TzSQMRNHeBRkDR1Awy7zea");
 const SESSION_PROGRAM_ID = new PublicKey("KeyspM2ssCJbqUhQ4k7sveSiY4WjnYsrXkC8oDbwde5");
 const ORACLE_PROGRAM_ID = new PublicKey("PriCems5tHihc6UDXDjzjeawomAwBduWMGAi8ZUjppd");
 const BTC_ORACLE = new PublicKey("71wtTRDY8Gxgw56bXFt2oc6qeAbTxzStdNiC425Z51sr");
@@ -115,7 +115,7 @@ if (!appProgram?.executable && walletLamports < requiredProgramRent + 50_000_000
 }
 if (!appProgram?.executable) blockers.push("leveraged-prediction program is not deployed");
 if (!sessionProgram?.executable) blockers.push("Session Keys program is absent on the base layer");
-if (!hydraProgram?.executable) blockers.push("ephemeral Hydra program is absent on the target ER");
+if (!hydraProgram?.executable) blockers.push("Hydra program is absent on the target ER");
 if (!protocolConfig || !configState) blockers.push("ProtocolConfig is not initialized");
 if (configState && !configState.admin.equals(wallet.publicKey)) blockers.push("ProtocolConfig admin does not match deployment wallet");
 if (!mintState || mintState.decimals !== 6) blockers.push("configured test-USDC mint is missing or is not six-decimal");

@@ -1,7 +1,5 @@
 import {
   DELEGATION_PROGRAM_ID,
-  EPHEMERAL_VAULT_ID,
-  MAGIC_PROGRAM_ID,
   delegationMetadataPdaFromDelegatedAccount,
   delegationRecordPdaFromDelegatedAccount,
 } from "@magicblock-labs/ephemeral-rollups-sdk";
@@ -15,8 +13,8 @@ import type { Direction } from "@/app/lib/domain";
 import { delegationBufferPda } from "@/app/lib/live/pdas";
 import { Buffer } from "buffer";
 
-export const HYDRA_EPHEMERAL_PROGRAM_ID = new PublicKey(
-  "eHyd5BU8QffvHi4GnXwxrK4WpS7pM2x9UGKHBWii7mf",
+export const HYDRA_PROGRAM_ID = new PublicKey(
+  "Hydra17i1feui9deaxu6d1TzSQMRNHeBRkDR1Awy7zea",
 );
 
 const INITIALIZE_USER_POSITIONS_DISCRIMINATOR = Uint8Array.from([
@@ -195,16 +193,14 @@ export function openPositionInstruction(
       { pubkey: accounts.userPositions, isSigner: false, isWritable: true },
       { pubkey: accounts.poolTokenAccount, isSigner: false, isWritable: true },
       { pubkey: accounts.derivedFeeAuthority, isSigner: false, isWritable: false },
-      { pubkey: accounts.feeTokenAccount, isSigner: false, isWritable: true },
+      { pubkey: accounts.feeTokenAccount, isSigner: false, isWritable: false },
       { pubkey: accounts.userTokenAccount, isSigner: false, isWritable: true },
-      { pubkey: accounts.payoutEscrowTokenAccount, isSigner: false, isWritable: true },
+      { pubkey: accounts.payoutEscrowTokenAccount, isSigner: false, isWritable: false },
       { pubkey: accounts.collateralMint, isSigner: false, isWritable: false },
       { pubkey: accounts.priceUpdate, isSigner: false, isWritable: false },
       { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
       { pubkey: accounts.hydraCrank, isSigner: false, isWritable: true },
-      { pubkey: HYDRA_EPHEMERAL_PROGRAM_ID, isSigner: false, isWritable: false },
-      { pubkey: EPHEMERAL_VAULT_ID, isSigner: false, isWritable: true },
-      { pubkey: MAGIC_PROGRAM_ID, isSigner: false, isWritable: false },
+      { pubkey: HYDRA_PROGRAM_ID, isSigner: false, isWritable: false },
       { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
       { pubkey: accounts.sessionToken, isSigner: false, isWritable: false },
     ],
@@ -232,7 +228,7 @@ export async function deriveHydraCrank(
   );
   return PublicKey.findProgramAddressSync(
     [new TextEncoder().encode("crank"), taskSeed],
-    HYDRA_EPHEMERAL_PROGRAM_ID,
+    HYDRA_PROGRAM_ID,
   )[0];
 }
 

@@ -11,6 +11,7 @@ COMPLETED=0
 KEEP_LOCAL_SERVICES="${KEEP_LOCAL_SERVICES:-0}"
 LOCAL_STACK_PID_FILE="${LOCAL_STACK_PID_FILE:-}"
 LOCAL_HYDRA_PID_FILE="${LOCAL_HYDRA_PID_FILE:-$RUN_DIR/hydra.pid}"
+HYDRA_PROGRAM_RPC="${HYDRA_PROGRAM_RPC:-https://devnet-as.magicblock.app}"
 
 cleanup() {
   if [[ "$KEEP_LOCAL_SERVICES" == "1" && "$COMPLETED" == "1" ]]; then
@@ -33,6 +34,10 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 cd "$REPO_ROOT"
+node scripts/dump-loader-v4-program.mjs \
+  "$HYDRA_PROGRAM_RPC" \
+  Hydra17i1feui9deaxu6d1TzSQMRNHeBRkDR1Awy7zea \
+  "$RUN_DIR/hydra.so"
 NO_DNA=1 anchor build --ignore-keys
 solana program dump -u devnet \
   KeyspM2ssCJbqUhQ4k7sveSiY4WjnYsrXkC8oDbwde5 \
@@ -46,8 +51,8 @@ solana program dump -u devnet \
     653bMLonrEbTNbSM9g1vH8PJATH1uh6wYNr9SYEJSzsY \
     --bpf-program PriCems5tHihc6UDXDjzjeawomAwBduWMGAi8ZUjppd \
     "$WORKSPACE_ROOT/leveraged-prediction-extras/tests/fixtures/ephemeral-oracle/target/deploy/ephemeral_oracle.so" \
-    --bpf-program eHyd5BU8QffvHi4GnXwxrK4WpS7pM2x9UGKHBWii7mf \
-    "$WORKSPACE_ROOT/hydra/target/deploy/hydra_ephemeral.so" \
+    --bpf-program Hydra17i1feui9deaxu6d1TzSQMRNHeBRkDR1Awy7zea \
+    "$RUN_DIR/hydra.so" \
     --bpf-program KeyspM2ssCJbqUhQ4k7sveSiY4WjnYsrXkC8oDbwde5 \
     "$RUN_DIR/session_keys.so"
 ) >"$STACK_LOG" 2>&1 &

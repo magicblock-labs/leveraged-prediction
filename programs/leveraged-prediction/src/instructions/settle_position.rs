@@ -185,7 +185,7 @@ pub(crate) fn require_hydra_trigger(
         .map_err(|_| error!(ErrorCode::InvalidHydraTrigger))?;
     require_keys_eq!(
         previous.program_id,
-        HYDRA_EPHEMERAL_PROGRAM_ID,
+        HYDRA_PROGRAM_ID,
         ErrorCode::InvalidHydraTrigger
     );
     require!(

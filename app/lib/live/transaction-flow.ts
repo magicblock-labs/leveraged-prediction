@@ -293,6 +293,12 @@ function instructionSummary(instructions: TransactionInstruction[]): object[] {
     programId: instruction.programId.toBase58(),
     accountCount: instruction.keys.length,
     dataBytes: instruction.data.length,
+    accounts: instruction.keys
+      .map(
+        (account, accountIndex) =>
+          `${accountIndex}:${account.pubkey.toBase58()}:${account.isSigner ? "s" : "-"}${account.isWritable ? "w" : "-"}`,
+      )
+      .join(", "),
   }));
 }
 
@@ -877,6 +883,10 @@ async function sendWithKeypairsAndConfirm(
     [feePayer, ...signers].map((signer) => [signer.publicKey.toBase58(), signer]),
   );
   transaction.partialSign(...uniqueSigners.values());
+  const accountKeys = transaction.compileMessage().accountKeys.map((account, index) => ({
+    index,
+    address: account.toBase58(),
+  }));
   const simulation = await connection.simulateTransaction(transaction);
   debugTransaction(label, "prepared session-signed transaction", {
     endpoint,
@@ -885,6 +895,7 @@ async function sendWithKeypairsAndConfirm(
     blockhash: latest.blockhash,
     lastValidBlockHeight: latest.lastValidBlockHeight,
     minContextSlot: blockhashContext.slot,
+    accountKeys,
     instructions: instructionSummary(instructions),
   });
   debugTransaction(label, "simulation completed", {

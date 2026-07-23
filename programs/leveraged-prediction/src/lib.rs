@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 use ephemeral_rollups_sdk::anchor::ephemeral;
-use hydra_api::instruction::ephemeral::find_crank_pda;
+use hydra_api::instruction::find_crank_pda;
 use session_keys::{session_auth_or, SessionError};
 use solana_sha256_hasher::hashv;
 
@@ -291,11 +291,11 @@ pub mod leveraged_prediction {
 #[cfg(test)]
 mod address_tests {
     use super::*;
+    use crate::instructions::HYDRA_PROGRAM_ID;
     use anchor_lang::solana_program::sysvar::instructions::{
         BorrowedAccountMeta, BorrowedInstruction,
     };
     use anchor_lang::solana_program::sysvar::SysvarId;
-    use hydra_api::instruction::ephemeral::PROGRAM_ID as HYDRA_EPHEMERAL_PROGRAM_ID;
     use solana_instructions_sysvar::{construct_instructions_data, store_current_index_checked};
 
     #[test]
@@ -314,7 +314,7 @@ mod address_tests {
         let user = pubkey!("11111111111111111111111111111112");
         assert_eq!(
             hydra_crank_address(market, user, 7, [1; 32]),
-            pubkey!("2Nq9YJidURjW9VEywc2gEvpsZqQfs1W7GQC97AY3qZCp")
+            pubkey!("6eK97Qn52NaBP8RJYUgUEGFJqoVoKEckqtaemEKF3ZZQ")
         );
     }
 
@@ -436,25 +436,18 @@ mod address_tests {
     #[test]
     fn previous_instruction_must_be_hydra_trigger() {
         let crank = Pubkey::new_unique();
-        let mut valid = trigger_sysvar_data(
-            &HYDRA_EPHEMERAL_PROGRAM_ID,
-            &crank,
-            &[hydra_api::consts::ix::TRIGGER],
-        );
+        let mut valid =
+            trigger_sysvar_data(&HYDRA_PROGRAM_ID, &crank, &[hydra_api::consts::ix::TRIGGER]);
         assert!(check_trigger(&mut valid, crank).is_ok());
 
         let wrong_id = Pubkey::new_unique();
         let mut wrong_program =
             trigger_sysvar_data(&wrong_id, &crank, &[hydra_api::consts::ix::TRIGGER]);
         assert!(check_trigger(&mut wrong_program, crank).is_err());
-        let mut wrong_discriminator =
-            trigger_sysvar_data(&HYDRA_EPHEMERAL_PROGRAM_ID, &crank, &[0]);
+        let mut wrong_discriminator = trigger_sysvar_data(&HYDRA_PROGRAM_ID, &crank, &[0]);
         assert!(check_trigger(&mut wrong_discriminator, crank).is_err());
-        let mut wrong_crank = trigger_sysvar_data(
-            &HYDRA_EPHEMERAL_PROGRAM_ID,
-            &crank,
-            &[hydra_api::consts::ix::TRIGGER],
-        );
+        let mut wrong_crank =
+            trigger_sysvar_data(&HYDRA_PROGRAM_ID, &crank, &[hydra_api::consts::ix::TRIGGER]);
         assert!(check_trigger(&mut wrong_crank, Pubkey::new_unique()).is_err());
     }
 }

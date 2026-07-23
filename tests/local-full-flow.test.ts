@@ -446,7 +446,6 @@ suite("local wallet-to-settlement flow", () => {
     const crankerBinary = process.env.HYDRA_CRANKER_BIN;
     if (!crankerBinary) throw new Error("HYDRA_CRANKER_BIN is required");
     cranker = spawn(crankerBinary, [
-      "--ephemeral",
       "--rpc-url", ER_RPC,
       "--ws-url", ER_WS,
       "--keypair", crankerPath,

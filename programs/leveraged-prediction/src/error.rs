@@ -40,8 +40,8 @@ pub enum ErrorCode {
     InvalidHydraCrank,
     #[msg("position settlement was not invoked by its Hydra crank")]
     InvalidHydraTrigger,
-    #[msg("market sponsor cannot fund the Hydra task and preserve its rent floor")]
-    InsufficientHydraSponsorLamports,
+    #[msg("session fee payer cannot fund the Hydra task")]
+    InsufficientHydraTaskLamports,
     #[msg("Hydra task creation failed")]
     HydraTaskCreationFailed,
     #[msg("user token account is not owned by the session authority")]

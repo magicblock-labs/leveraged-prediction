@@ -2,7 +2,7 @@
 set -eu
 
 idl=${1:-target/idl/leveraged_prediction.json}
-expected=69f379140587cd87ef99e35362091605701e7205f457f7535b7be0cc0cb4ba2f
+expected=f9438b173621035dd424278a2cfb4656bf777ed8046426ff1dab79b6080c1ae8
 actual=$(
   LC_ALL=C LANG=C jq -cS '{instructions,accounts,events,types,errors}' "$idl" |
     LC_ALL=C LANG=C shasum -a 256 |

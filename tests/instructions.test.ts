@@ -77,11 +77,13 @@ describe("final ABI write builders", () => {
       },
     );
 
-    expect(instruction.keys).toHaveLength(20);
+    expect(instruction.keys).toHaveLength(18);
     expect(instruction.keys[0]).toMatchObject({ isSigner: false, isWritable: false });
     expect(instruction.keys[1]).toMatchObject({ isSigner: true, isWritable: false });
     expect(instruction.keys[2]).toMatchObject({ isSigner: true, isWritable: true });
-    expect(instruction.keys[19]).toMatchObject({ pubkey: keys[2], isSigner: false, isWritable: false });
+    expect(instruction.keys[8]).toMatchObject({ isSigner: false, isWritable: false });
+    expect(instruction.keys[10]).toMatchObject({ isSigner: false, isWritable: false });
+    expect(instruction.keys[17]).toMatchObject({ pubkey: keys[2], isSigner: false, isWritable: false });
     expect(instruction.data.subarray(0, 8)).toEqual(Buffer.from(instructionDiscriminators.openPosition));
     expect(instruction.data.readUInt32LE(8)).toBe(17);
     expect(instruction.data.subarray(12, 44)).toEqual(Buffer.alloc(32, 9));
@@ -96,7 +98,7 @@ describe("final ABI write builders", () => {
     const user = new PublicKey("11111111111111111111111111111112");
     const crank = await deriveHydraCrank(market, user, 7, Buffer.alloc(32, 1));
     expect(market.toBase58()).toBe("6ME7jFHJkk27zAM7hz2A3V1Y4EeTkcjyZxnekQLtn8V1");
-    expect(crank.toBase58()).toBe("2Nq9YJidURjW9VEywc2gEvpsZqQfs1W7GQC97AY3qZCp");
+    expect(crank.toBase58()).toBe("6eK97Qn52NaBP8RJYUgUEGFJqoVoKEckqtaemEKF3ZZQ");
   });
 
   it("rejects a zero task salt before a wallet can sign", () => {

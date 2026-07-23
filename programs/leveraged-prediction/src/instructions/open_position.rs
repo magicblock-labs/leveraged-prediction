@@ -100,13 +100,13 @@ pub fn handler(
         instructions_sysvar: Instructions::id(),
     })?;
     let scheduled = [ScheduledIx {
-        program_id: crate::ID.to_bytes(),
+        program_id: crate::ID,
         metas: &scheduled_metas,
         data: &scheduled_data,
     }];
     let task_args = HydraCreateArgs {
         seed: task_seed,
-        authority: [0; 32],
+        authority: ctx.accounts.task_payer.key().to_bytes(),
         start_slot: clock
             .slot
             .checked_add(HYDRA_FIRST_ATTEMPT_DELAY_SLOTS)
@@ -117,11 +117,16 @@ pub fn handler(
         cu_limit: HYDRA_COMPUTE_UNIT_LIMIT,
         scheduled: &scheduled,
     };
-    let materialized_task_data_len =
-        crank_account_size(region_len_for(scheduled_metas.len(), scheduled_data.len()));
-    let task_rent = ephemeral_rollups_sdk::ephemeral_accounts::rent(
-        u32::try_from(materialized_task_data_len).map_err(|_| error!(ErrorCode::MathOverflow))?,
-    );
+    let allocation_region_len = CREATE_IX_HEADER_LEN
+        .checked_add(
+            SERIALIZED_META_SIZE
+                .checked_mul(scheduled_metas.len())
+                .ok_or(ErrorCode::MathOverflow)?,
+        )
+        .and_then(|value| value.checked_add(scheduled_data.len()))
+        .and_then(|value| value.checked_add(MAX_INSTRUCTIONS))
+        .ok_or(ErrorCode::MathOverflow)?;
+    let task_rent = Rent::get()?.minimum_balance(crank_account_size(allocation_region_len));
     let reward_budget = HYDRA_REMAINING_ATTEMPTS
         .checked_add(1)
         .and_then(|attempts| attempts.checked_mul(HYDRA_CRANKER_REWARD))
@@ -129,52 +134,37 @@ pub fn handler(
     let task_cost = task_rent
         .checked_add(reward_budget)
         .ok_or(ErrorCode::MathOverflow)?;
-    let sponsor_reserve = task_cost
-        .checked_mul(u64::from(MAX_MARKET_FINANCIALLY_ACTIVE_POSITIONS))
-        .ok_or(ErrorCode::MathOverflow)?;
-    let market_info = ctx.accounts.market.to_account_info();
-    let market_rent_floor = Rent::get()?.minimum_balance(market_info.data_len());
-    let required_market_lamports = market_rent_floor
-        .checked_add(task_cost)
-        .and_then(|value| value.checked_add(sponsor_reserve))
-        .ok_or(ErrorCode::MathOverflow)?;
+    require!(
+        ctx.accounts.task_payer.lamports() >= task_cost,
+        ErrorCode::InsufficientHydraTaskLamports
+    );
     transfer_lamports(
         CpiContext::new(
             ctx.accounts.system_program.key(),
             LamportsTransfer {
                 from: ctx.accounts.task_payer.to_account_info(),
-                to: market_info.clone(),
+                to: ctx.accounts.hydra_crank.to_account_info(),
             },
         ),
-        task_cost,
+        task_rent,
     )?;
-    require!(
-        market_info.lamports() >= required_market_lamports,
-        ErrorCode::InsufficientHydraSponsorLamports
-    );
-    let market_id = ctx.accounts.market.market_id.to_le_bytes();
-    let market_bump = [ctx.accounts.market.bump];
-    let market_seeds: &[&[u8]] = &[MARKET_SEED, market_id.as_ref(), &market_bump];
     hydra_cpi::create(
-        &market_info,
+        &ctx.accounts.task_payer.to_account_info(),
         &ctx.accounts.hydra_crank.to_account_info(),
-        &ctx.accounts.ephemeral_vault.to_account_info(),
-        &ctx.accounts.magic_program.to_account_info(),
+        &ctx.accounts.system_program.to_account_info(),
         &task_args,
-        &[market_seeds],
     )
     .map_err(|_| error!(ErrorCode::HydraTaskCreationFailed))?;
-    {
-        let crank_info = ctx.accounts.hydra_crank.to_account_info();
-        let mut market_lamports = market_info.try_borrow_mut_lamports()?;
-        let mut crank_lamports = crank_info.try_borrow_mut_lamports()?;
-        **market_lamports = market_lamports
-            .checked_sub(reward_budget)
-            .ok_or(ErrorCode::MathOverflow)?;
-        **crank_lamports = crank_lamports
-            .checked_add(reward_budget)
-            .ok_or(ErrorCode::MathOverflow)?;
-    }
+    transfer_lamports(
+        CpiContext::new(
+            ctx.accounts.system_program.key(),
+            LamportsTransfer {
+                from: ctx.accounts.task_payer.to_account_info(),
+                to: ctx.accounts.hydra_crank.to_account_info(),
+            },
+        ),
+        reward_budget,
+    )?;
 
     token::transfer(
         CpiContext::new(
@@ -239,9 +229,9 @@ fn settle_position_schedule_metas(
         .map(|meta| {
             require!(!meta.is_signer, ErrorCode::InvalidHydraCrank);
             Ok(if meta.is_writable {
-                SchedMeta::writable(meta.pubkey.to_bytes())
+                SchedMeta::writable(meta.pubkey)
             } else {
-                SchedMeta::readonly(meta.pubkey.to_bytes())
+                SchedMeta::readonly(meta.pubkey)
             })
         })
         .collect()
@@ -266,7 +256,7 @@ pub struct OpenPosition<'info> {
     /// CHECK: Canonical zero-data PDA used by the scheduled settlement instruction.
     #[account(seeds = [FEE_AUTHORITY_SEED, market.key().as_ref()], bump)]
     pub derived_fee_authority: UncheckedAccount<'info>,
-    #[account(mut, associated_token::mint = collateral_mint, associated_token::authority = derived_fee_authority)]
+    #[account(associated_token::mint = collateral_mint, associated_token::authority = derived_fee_authority)]
     pub fee_token_account: Box<Account<'info, TokenAccount>>,
     #[account(
         mut,
@@ -274,7 +264,7 @@ pub struct OpenPosition<'info> {
         constraint = user_token_account.mint == collateral_mint.key() @ ErrorCode::TokenMintMismatch
     )]
     pub user_token_account: Box<Account<'info, TokenAccount>>,
-    #[account(mut, associated_token::mint = collateral_mint, associated_token::authority = user_positions)]
+    #[account(associated_token::mint = collateral_mint, associated_token::authority = user_positions)]
     pub payout_escrow_token_account: Box<Account<'info, TokenAccount>>,
     pub collateral_mint: Box<Account<'info, Mint>>,
     /// CHECK: Canonical address is constrained here; payload and owner are parsed in the handler.
@@ -284,15 +274,9 @@ pub struct OpenPosition<'info> {
     /// CHECK: Address is derived from the Market, user, position nonce, and task salt.
     #[account(mut, address = hydra_crank_address(market.key(), user.key(), nonce, task_salt) @ ErrorCode::InvalidHydraCrank)]
     pub hydra_crank: UncheckedAccount<'info>,
-    /// CHECK: Canonical Hydra ER program; explicit meta lets the ER clone it before CPI.
-    #[account(address = HYDRA_EPHEMERAL_PROGRAM_ID, executable)]
+    /// CHECK: Canonical consolidated Hydra program deployed on the target ER.
+    #[account(address = HYDRA_PROGRAM_ID, executable)]
     pub hydra_program: UncheckedAccount<'info>,
-    /// CHECK: Canonical MagicBlock ephemeral-account rent vault.
-    #[account(mut, address = EPHEMERAL_VAULT_ID)]
-    pub ephemeral_vault: UncheckedAccount<'info>,
-    /// CHECK: Canonical MagicBlock Magic program used by Hydra creation.
-    #[account(address = MAGIC_PROGRAM_ID)]
-    pub magic_program: UncheckedAccount<'info>,
     pub system_program: Program<'info, System>,
     #[session(signer = session_signer, authority = user.key())]
     pub session_token: Option<Account<'info, SessionTokenV2>>,
@@ -326,7 +310,7 @@ mod tests {
         let actual = settle_position_schedule_metas(generated).unwrap();
         assert_eq!(actual.len(), expected.len());
         for (actual, expected) in actual.iter().zip(expected) {
-            assert_eq!(actual.pubkey, expected.pubkey.to_bytes());
+            assert_eq!(actual.pubkey, expected.pubkey);
             assert_eq!(actual.is_writable, expected.is_writable);
         }
     }
