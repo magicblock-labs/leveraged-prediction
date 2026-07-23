@@ -3,3 +3,11 @@
 /.env
 /test-ledger
 *.log
+/node_modules
+/.next
+/coverage
+/magicblock-test-storage
+/.env.local
+/.devnet
+.DS_Store
+*.tsbuildinfo

@@ -1,6 +1,7 @@
 use anchor_lang::prelude::*;
 use ephemeral_rollups_sdk::anchor::ephemeral;
-use hydra_api::instruction::ephemeral::find_crank_pda;
+use hydra_api::instruction::find_crank_pda;
+use session_keys::{session_auth_or, SessionError};
 use solana_sha256_hasher::hashv;
 
 pub mod error;
@@ -195,8 +196,12 @@ pub mod leveraged_prediction {
         instructions::set_market_mode::handler(ctx, mode)
     }
 
-    pub fn delegate_market(ctx: Context<DelegateMarket>, market_id: u16) -> Result<()> {
-        instructions::delegate_market::handler(ctx, market_id)
+    pub fn delegate_market(
+        ctx: Context<DelegateMarket>,
+        market_id: u16,
+        validator: Pubkey,
+    ) -> Result<()> {
+        instructions::delegate_market::handler(ctx, market_id, validator)
     }
 
     pub fn initialize_user_positions(ctx: Context<InitializeUserPositions>) -> Result<()> {
@@ -207,12 +212,18 @@ pub mod leveraged_prediction {
         instructions::initialize_user_liquidity::handler(ctx)
     }
 
-    pub fn delegate_user_positions(ctx: Context<DelegateUserPositions>) -> Result<()> {
-        instructions::delegate_user_positions::handler(ctx)
+    pub fn delegate_user_positions(
+        ctx: Context<DelegateUserPositions>,
+        validator: Pubkey,
+    ) -> Result<()> {
+        instructions::delegate_user_positions::handler(ctx, validator)
     }
 
-    pub fn delegate_user_liquidity(ctx: Context<DelegateUserLiquidity>) -> Result<()> {
-        instructions::delegate_user_liquidity::handler(ctx)
+    pub fn delegate_user_liquidity(
+        ctx: Context<DelegateUserLiquidity>,
+        validator: Pubkey,
+    ) -> Result<()> {
+        instructions::delegate_user_liquidity::handler(ctx, validator)
     }
 
     pub fn undelegate_user_liquidity(ctx: Context<UndelegateUserLiquidity>) -> Result<()> {
@@ -243,6 +254,7 @@ pub mod leveraged_prediction {
         instructions::execute_withdrawal::handler(ctx)
     }
 
+    #[session_auth_or(false, SessionError::InvalidToken)]
     pub fn open_position(
         ctx: Context<OpenPosition>,
         nonce: u32,
@@ -279,11 +291,11 @@ pub mod leveraged_prediction {
 #[cfg(test)]
 mod address_tests {
     use super::*;
+    use crate::instructions::HYDRA_PROGRAM_ID;
     use anchor_lang::solana_program::sysvar::instructions::{
         BorrowedAccountMeta, BorrowedInstruction,
     };
     use anchor_lang::solana_program::sysvar::SysvarId;
-    use hydra_api::instruction::ephemeral::PROGRAM_ID as HYDRA_EPHEMERAL_PROGRAM_ID;
     use solana_instructions_sysvar::{construct_instructions_data, store_current_index_checked};
 
     #[test]
@@ -293,6 +305,16 @@ mod address_tests {
         assert_ne!(
             hydra_crank_address(market, user, 1, [1; 32]),
             hydra_crank_address(market, user, 1, [2; 32])
+        );
+    }
+
+    #[test]
+    fn hydra_crank_derivation_matches_the_typescript_client_vector() {
+        let market = pubkey!("6ME7jFHJkk27zAM7hz2A3V1Y4EeTkcjyZxnekQLtn8V1");
+        let user = pubkey!("11111111111111111111111111111112");
+        assert_eq!(
+            hydra_crank_address(market, user, 7, [1; 32]),
+            pubkey!("6eK97Qn52NaBP8RJYUgUEGFJqoVoKEckqtaemEKF3ZZQ")
         );
     }
 
@@ -414,25 +436,18 @@ mod address_tests {
     #[test]
     fn previous_instruction_must_be_hydra_trigger() {
         let crank = Pubkey::new_unique();
-        let mut valid = trigger_sysvar_data(
-            &HYDRA_EPHEMERAL_PROGRAM_ID,
-            &crank,
-            &[hydra_api::consts::ix::TRIGGER],
-        );
+        let mut valid =
+            trigger_sysvar_data(&HYDRA_PROGRAM_ID, &crank, &[hydra_api::consts::ix::TRIGGER]);
         assert!(check_trigger(&mut valid, crank).is_ok());
 
         let wrong_id = Pubkey::new_unique();
         let mut wrong_program =
             trigger_sysvar_data(&wrong_id, &crank, &[hydra_api::consts::ix::TRIGGER]);
         assert!(check_trigger(&mut wrong_program, crank).is_err());
-        let mut wrong_discriminator =
-            trigger_sysvar_data(&HYDRA_EPHEMERAL_PROGRAM_ID, &crank, &[0]);
+        let mut wrong_discriminator = trigger_sysvar_data(&HYDRA_PROGRAM_ID, &crank, &[0]);
         assert!(check_trigger(&mut wrong_discriminator, crank).is_err());
-        let mut wrong_crank = trigger_sysvar_data(
-            &HYDRA_EPHEMERAL_PROGRAM_ID,
-            &crank,
-            &[hydra_api::consts::ix::TRIGGER],
-        );
+        let mut wrong_crank =
+            trigger_sysvar_data(&HYDRA_PROGRAM_ID, &crank, &[hydra_api::consts::ix::TRIGGER]);
         assert!(check_trigger(&mut wrong_crank, Pubkey::new_unique()).is_err());
     }
 }

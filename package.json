@@ -1,0 +1,46 @@
+{
+  "name": "leveraged-prediction",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.33.2",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:oracle:devnet": "LIVE_ORACLE_E2E=1 vitest run tests/devnet-oracle.test.ts --testTimeout=30000",
+    "bootstrap:devnet": "node scripts/bootstrap-devnet.mjs",
+    "preflight:devnet": "node scripts/check-devnet.mjs",
+    "test:e2e:local": "./scripts/run-local-e2e.sh",
+    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build"
+  },
+  "dependencies": {
+    "@coral-xyz/anchor": "0.32.1",
+    "@magicblock-labs/ephemeral-rollups-sdk": "0.15.5",
+    "@magicblock-labs/gum-sdk": "3.0.10",
+    "@noble/hashes": "1.8.0",
+    "@solana/spl-token": "0.4.15",
+    "@solana/wallet-adapter-base": "0.9.27",
+    "@solana/wallet-adapter-react": "0.15.39",
+    "@solana/wallet-adapter-react-ui": "0.9.39",
+    "@solana/web3.js": "1.98.4",
+    "buffer": "6.0.3",
+    "next": "16.2.10",
+    "pixi.js": "8.19.0",
+    "react": "19.2.7",
+    "react-dom": "19.2.7"
+  },
+  "devDependencies": {
+    "@coral-xyz/borsh": "0.31.1",
+    "@types/node": "24.10.1",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "eslint": "9.39.1",
+    "eslint-config-next": "16.2.10",
+    "tweetnacl": "1.0.3",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10"
+  }
+}

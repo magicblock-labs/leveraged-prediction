@@ -1,4 +1,6 @@
 use super::*;
+use anchor_lang::solana_program::program_option::COption;
+use session_keys::{SessionTokenV2, SessionV2};
 
 pub fn handler(
     ctx: Context<OpenPosition>,
@@ -33,6 +35,12 @@ pub fn handler(
         sample.price >= min_entry_price && sample.price <= max_entry_price,
         ErrorCode::SlippageExceeded
     );
+    require_session_token_delegate(
+        ctx.accounts.user_token_account.delegate,
+        ctx.accounts.user_token_account.delegated_amount,
+        ctx.accounts.session_signer.key(),
+        collateral,
+    )?;
 
     let pool_before = ctx.accounts.pool_token_account.amount;
     let epoch_equity = if ctx.accounts.market.active_positions == 0 {
@@ -92,13 +100,13 @@ pub fn handler(
         instructions_sysvar: Instructions::id(),
     })?;
     let scheduled = [ScheduledIx {
-        program_id: crate::ID.to_bytes(),
+        program_id: crate::ID,
         metas: &scheduled_metas,
         data: &scheduled_data,
     }];
     let task_args = HydraCreateArgs {
         seed: task_seed,
-        authority: [0; 32],
+        authority: ctx.accounts.task_payer.key().to_bytes(),
         start_slot: clock
             .slot
             .checked_add(HYDRA_FIRST_ATTEMPT_DELAY_SLOTS)
@@ -109,11 +117,16 @@ pub fn handler(
         cu_limit: HYDRA_COMPUTE_UNIT_LIMIT,
         scheduled: &scheduled,
     };
-    let materialized_task_data_len =
-        crank_account_size(region_len_for(scheduled_metas.len(), scheduled_data.len()));
-    let task_rent = ephemeral_rollups_sdk::ephemeral_accounts::rent(
-        u32::try_from(materialized_task_data_len).map_err(|_| error!(ErrorCode::MathOverflow))?,
-    );
+    let allocation_region_len = CREATE_IX_HEADER_LEN
+        .checked_add(
+            SERIALIZED_META_SIZE
+                .checked_mul(scheduled_metas.len())
+                .ok_or(ErrorCode::MathOverflow)?,
+        )
+        .and_then(|value| value.checked_add(scheduled_data.len()))
+        .and_then(|value| value.checked_add(MAX_INSTRUCTIONS))
+        .ok_or(ErrorCode::MathOverflow)?;
+    let task_rent = Rent::get()?.minimum_balance(crank_account_size(allocation_region_len));
     let reward_budget = HYDRA_REMAINING_ATTEMPTS
         .checked_add(1)
         .and_then(|attempts| attempts.checked_mul(HYDRA_CRANKER_REWARD))
@@ -121,52 +134,37 @@ pub fn handler(
     let task_cost = task_rent
         .checked_add(reward_budget)
         .ok_or(ErrorCode::MathOverflow)?;
-    let sponsor_reserve = task_cost
-        .checked_mul(u64::from(MAX_MARKET_FINANCIALLY_ACTIVE_POSITIONS))
-        .ok_or(ErrorCode::MathOverflow)?;
-    let market_info = ctx.accounts.market.to_account_info();
-    let market_rent_floor = Rent::get()?.minimum_balance(market_info.data_len());
-    let required_market_lamports = market_rent_floor
-        .checked_add(task_cost)
-        .and_then(|value| value.checked_add(sponsor_reserve))
-        .ok_or(ErrorCode::MathOverflow)?;
+    require!(
+        ctx.accounts.task_payer.lamports() >= task_cost,
+        ErrorCode::InsufficientHydraTaskLamports
+    );
     transfer_lamports(
         CpiContext::new(
             ctx.accounts.system_program.key(),
             LamportsTransfer {
-                from: ctx.accounts.user.to_account_info(),
-                to: market_info.clone(),
+                from: ctx.accounts.task_payer.to_account_info(),
+                to: ctx.accounts.hydra_crank.to_account_info(),
             },
         ),
-        task_cost,
+        task_rent,
     )?;
-    require!(
-        market_info.lamports() >= required_market_lamports,
-        ErrorCode::InsufficientHydraSponsorLamports
-    );
-    let market_id = ctx.accounts.market.market_id.to_le_bytes();
-    let market_bump = [ctx.accounts.market.bump];
-    let market_seeds: &[&[u8]] = &[MARKET_SEED, market_id.as_ref(), &market_bump];
     hydra_cpi::create(
-        &market_info,
+        &ctx.accounts.task_payer.to_account_info(),
         &ctx.accounts.hydra_crank.to_account_info(),
-        &ctx.accounts.ephemeral_vault.to_account_info(),
-        &ctx.accounts.magic_program.to_account_info(),
+        &ctx.accounts.system_program.to_account_info(),
         &task_args,
-        &[market_seeds],
     )
     .map_err(|_| error!(ErrorCode::HydraTaskCreationFailed))?;
-    {
-        let crank_info = ctx.accounts.hydra_crank.to_account_info();
-        let mut market_lamports = market_info.try_borrow_mut_lamports()?;
-        let mut crank_lamports = crank_info.try_borrow_mut_lamports()?;
-        **market_lamports = market_lamports
-            .checked_sub(reward_budget)
-            .ok_or(ErrorCode::MathOverflow)?;
-        **crank_lamports = crank_lamports
-            .checked_add(reward_budget)
-            .ok_or(ErrorCode::MathOverflow)?;
-    }
+    transfer_lamports(
+        CpiContext::new(
+            ctx.accounts.system_program.key(),
+            LamportsTransfer {
+                from: ctx.accounts.task_payer.to_account_info(),
+                to: ctx.accounts.hydra_crank.to_account_info(),
+            },
+        ),
+        reward_budget,
+    )?;
 
     token::transfer(
         CpiContext::new(
@@ -174,7 +172,7 @@ pub fn handler(
             SplTransfer {
                 from: ctx.accounts.user_token_account.to_account_info(),
                 to: ctx.accounts.pool_token_account.to_account_info(),
-                authority: ctx.accounts.user.to_account_info(),
+                authority: ctx.accounts.session_signer.to_account_info(),
             },
         ),
         collateral,
@@ -205,6 +203,23 @@ pub fn handler(
     Ok(())
 }
 
+fn require_session_token_delegate(
+    delegate: COption<Pubkey>,
+    delegated_amount: u64,
+    session_signer: Pubkey,
+    collateral: u64,
+) -> Result<()> {
+    require!(
+        delegate == COption::Some(session_signer),
+        ErrorCode::InvalidSessionTokenDelegate
+    );
+    require!(
+        delegated_amount >= collateral,
+        ErrorCode::InsufficientSessionTokenAllowance
+    );
+    Ok(())
+}
+
 fn settle_position_schedule_metas(
     accounts: crate::accounts::SettlePosition,
 ) -> Result<Vec<SchedMeta>> {
@@ -214,19 +229,22 @@ fn settle_position_schedule_metas(
         .map(|meta| {
             require!(!meta.is_signer, ErrorCode::InvalidHydraCrank);
             Ok(if meta.is_writable {
-                SchedMeta::writable(meta.pubkey.to_bytes())
+                SchedMeta::writable(meta.pubkey)
             } else {
-                SchedMeta::readonly(meta.pubkey.to_bytes())
+                SchedMeta::readonly(meta.pubkey)
             })
         })
         .collect()
 }
 
-#[derive(Accounts)]
+#[derive(Accounts, SessionV2)]
 #[instruction(nonce: u32, task_salt: [u8; 32])]
 pub struct OpenPosition<'info> {
+    /// CHECK: Wallet authority bound to UserPositions, the session token, and the token account.
+    pub user: UncheckedAccount<'info>,
+    pub session_signer: Signer<'info>,
     #[account(mut)]
-    pub user: Signer<'info>,
+    pub task_payer: Signer<'info>,
     #[account(seeds = [CONFIG_SEED], bump = protocol_config.bump, has_one = collateral_mint)]
     pub protocol_config: Box<Account<'info, ProtocolConfig>>,
     #[account(mut, seeds = [MARKET_SEED, &market.market_id.to_le_bytes()], bump = market.bump)]
@@ -238,11 +256,15 @@ pub struct OpenPosition<'info> {
     /// CHECK: Canonical zero-data PDA used by the scheduled settlement instruction.
     #[account(seeds = [FEE_AUTHORITY_SEED, market.key().as_ref()], bump)]
     pub derived_fee_authority: UncheckedAccount<'info>,
-    #[account(mut, associated_token::mint = collateral_mint, associated_token::authority = derived_fee_authority)]
+    #[account(associated_token::mint = collateral_mint, associated_token::authority = derived_fee_authority)]
     pub fee_token_account: Box<Account<'info, TokenAccount>>,
-    #[account(mut)]
+    #[account(
+        mut,
+        constraint = user_token_account.owner == user.key() @ ErrorCode::InvalidTokenOwner,
+        constraint = user_token_account.mint == collateral_mint.key() @ ErrorCode::TokenMintMismatch
+    )]
     pub user_token_account: Box<Account<'info, TokenAccount>>,
-    #[account(mut, associated_token::mint = collateral_mint, associated_token::authority = user_positions)]
+    #[account(associated_token::mint = collateral_mint, associated_token::authority = user_positions)]
     pub payout_escrow_token_account: Box<Account<'info, TokenAccount>>,
     pub collateral_mint: Box<Account<'info, Mint>>,
     /// CHECK: Canonical address is constrained here; payload and owner are parsed in the handler.
@@ -252,16 +274,12 @@ pub struct OpenPosition<'info> {
     /// CHECK: Address is derived from the Market, user, position nonce, and task salt.
     #[account(mut, address = hydra_crank_address(market.key(), user.key(), nonce, task_salt) @ ErrorCode::InvalidHydraCrank)]
     pub hydra_crank: UncheckedAccount<'info>,
-    /// CHECK: Canonical Hydra ER program; explicit meta lets the ER clone it before CPI.
-    #[account(address = HYDRA_EPHEMERAL_PROGRAM_ID, executable)]
+    /// CHECK: Canonical consolidated Hydra program deployed on the target ER.
+    #[account(address = HYDRA_PROGRAM_ID, executable)]
     pub hydra_program: UncheckedAccount<'info>,
-    /// CHECK: Canonical MagicBlock ephemeral-account rent vault.
-    #[account(mut, address = EPHEMERAL_VAULT_ID)]
-    pub ephemeral_vault: UncheckedAccount<'info>,
-    /// CHECK: Canonical MagicBlock Magic program used by Hydra creation.
-    #[account(address = MAGIC_PROGRAM_ID)]
-    pub magic_program: UncheckedAccount<'info>,
     pub system_program: Program<'info, System>,
+    #[session(signer = session_signer, authority = user.key())]
+    pub session_token: Option<Account<'info, SessionTokenV2>>,
 }
 
 #[cfg(test)]
@@ -292,8 +310,41 @@ mod tests {
         let actual = settle_position_schedule_metas(generated).unwrap();
         assert_eq!(actual.len(), expected.len());
         for (actual, expected) in actual.iter().zip(expected) {
-            assert_eq!(actual.pubkey, expected.pubkey.to_bytes());
+            assert_eq!(actual.pubkey, expected.pubkey);
             assert_eq!(actual.is_writable, expected.is_writable);
         }
+    }
+
+    #[test]
+    fn session_delegate_must_match_and_cover_collateral() {
+        let session_signer = Pubkey::new_unique();
+        assert!(require_session_token_delegate(
+            COption::Some(session_signer),
+            25_000_000,
+            session_signer,
+            25_000_000,
+        )
+        .is_ok());
+        assert!(require_session_token_delegate(
+            COption::None,
+            25_000_000,
+            session_signer,
+            25_000_000,
+        )
+        .is_err());
+        assert!(require_session_token_delegate(
+            COption::Some(Pubkey::new_unique()),
+            25_000_000,
+            session_signer,
+            25_000_000,
+        )
+        .is_err());
+        assert!(require_session_token_delegate(
+            COption::Some(session_signer),
+            24_999_999,
+            session_signer,
+            25_000_000,
+        )
+        .is_err());
     }
 }
