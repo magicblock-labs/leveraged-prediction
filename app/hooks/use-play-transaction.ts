@@ -17,6 +17,7 @@ import {
   recoverOpenPositionIntent,
   type TransactionProgress,
 } from "@/app/lib/live/transaction-flow";
+import type { StoredGameSession } from "@/app/lib/live/session-store";
 
 function intentPlay(intent: OpenPositionIntent, snapshot: MarketSnapshot): Play {
   return {
@@ -35,6 +36,8 @@ function intentPlay(intent: OpenPositionIntent, snapshot: MarketSnapshot): Play 
 export function usePlayTransaction(
   snapshot: MarketSnapshot | null,
   refresh: () => Promise<void> | void,
+  session: StoredGameSession | null,
+  refreshSession: () => Promise<void> | void,
 ) {
   const wallet = useWallet();
   const { setVisible } = useWalletModal();
@@ -71,20 +74,29 @@ export function usePlayTransaction(
       setVisible(true);
       return;
     }
+    if (!wallet.signTransaction) {
+      setError("This wallet must support transaction signing to play");
+      return;
+    }
+    if (!session) {
+      setError("Start a play session before choosing Up or Down");
+      return;
+    }
     setError(null);
     try {
       const result = await openPositionFlow(
         wallet.publicKey,
         direction,
         amount,
-        wallet.sendTransaction,
+        session,
+        wallet.signTransaction,
         (next) => {
           setProgress(next);
           setIntent(next.intent);
         },
       );
       setIntent(result.intent);
-      await refresh();
+      await Promise.all([refresh(), refreshSession()]);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Play submission failed");
       setProgress(null);
@@ -92,7 +104,7 @@ export function usePlayTransaction(
       const stored = loadOpenIntent(wallet.publicKey.toBase58(), config.marketId);
       setIntent(stored && requiresIntentRecovery(stored) ? stored : null);
     }
-  }, [refresh, setVisible, snapshot?.mode, wallet.publicKey, wallet.sendTransaction]);
+  }, [refresh, refreshSession, session, setVisible, snapshot?.mode, wallet.publicKey, wallet.signTransaction]);
 
   const recover = useCallback(async () => {
     if (!wallet.publicKey || !intent) return;
@@ -114,12 +126,16 @@ export function usePlayTransaction(
       setVisible(true);
       return;
     }
+    if (!wallet.signTransaction) {
+      setError("This wallet must support transaction signing to claim a payout");
+      return;
+    }
     setError(null);
     setClaimStatus("Checking the protected payout balance…");
     try {
       await claimFallbackPayoutFlow(
         wallet.publicKey,
-        wallet.sendTransaction,
+        wallet.signTransaction,
         setClaimStatus,
       );
       setClaimStatus("Payout claimed");
@@ -129,7 +145,7 @@ export function usePlayTransaction(
       setClaimStatus(null);
       setError(cause instanceof Error ? cause.message : "Payout claim failed");
     }
-  }, [refresh, setVisible, wallet.publicKey, wallet.sendTransaction]);
+  }, [refresh, setVisible, wallet.publicKey, wallet.signTransaction]);
 
   const needsRecovery = Boolean(intent && requiresIntentRecovery(intent));
   const pendingPlay = useMemo(
@@ -145,7 +161,11 @@ export function usePlayTransaction(
     [intent, snapshot],
   );
   const statusMessage = claimStatus ?? progress?.message ?? intent?.message ?? error ?? (
-    snapshot?.mode === "live" && !wallet.publicKey ? "Connect a wallet to play" : null
+    snapshot?.mode === "live" && !wallet.publicKey
+      ? "Connect a wallet to play"
+      : snapshot?.mode === "live" && !session
+        ? "Start a session to play"
+        : null
   );
 
   return {

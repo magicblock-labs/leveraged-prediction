@@ -9,6 +9,7 @@ const BASE_RPC = process.env.SOLANA_RPC_ENDPOINT ?? "https://rpc.magicblock.app/
 const ER_RPC = process.env.EPHEMERAL_RPC_ENDPOINT ?? "https://devnet-as.magicblock.app";
 const PROGRAM_ID = new PublicKey("AcvFWjSFrLAAWMynqQmBxeBe8wHRTVhhHtB6byatQLFr");
 const HYDRA_PROGRAM_ID = new PublicKey("eHyd5BU8QffvHi4GnXwxrK4WpS7pM2x9UGKHBWii7mf");
+const SESSION_PROGRAM_ID = new PublicKey("KeyspM2ssCJbqUhQ4k7sveSiY4WjnYsrXkC8oDbwde5");
 const ORACLE_PROGRAM_ID = new PublicKey("PriCems5tHihc6UDXDjzjeawomAwBduWMGAi8ZUjppd");
 const BTC_ORACLE = new PublicKey("71wtTRDY8Gxgw56bXFt2oc6qeAbTxzStdNiC425Z51sr");
 const BTC_FEED_ID = Buffer.from("59642ec3906a38d1267d4aafac36a5e2a47e6d38ed7e5b5843dd287e5e21ab65", "hex");
@@ -75,9 +76,10 @@ const requiredProgramRent = await base.getMinimumBalanceForRentExemption(binaryS
 const protocolAddress = protocolConfigPda();
 const marketAddress = marketPda();
 
-const [walletLamports, appProgram, hydraProgram, oracle, protocolConfig, market] = await Promise.all([
+const [walletLamports, appProgram, sessionProgram, hydraProgram, oracle, protocolConfig, market] = await Promise.all([
   base.getBalance(wallet.publicKey, "confirmed"),
   base.getAccountInfo(PROGRAM_ID, "confirmed"),
+  base.getAccountInfo(SESSION_PROGRAM_ID, "confirmed"),
   er.getAccountInfo(HYDRA_PROGRAM_ID, "confirmed"),
   er.getAccountInfo(BTC_ORACLE, "confirmed"),
   base.getAccountInfo(protocolAddress, "confirmed"),
@@ -112,6 +114,7 @@ if (!appProgram?.executable && walletLamports < requiredProgramRent + 50_000_000
   blockers.push(`deployment wallet needs about ${((requiredProgramRent + 50_000_000 - walletLamports) / 1_000_000_000).toFixed(3)} more SOL`);
 }
 if (!appProgram?.executable) blockers.push("leveraged-prediction program is not deployed");
+if (!sessionProgram?.executable) blockers.push("Session Keys program is absent on the base layer");
 if (!hydraProgram?.executable) blockers.push("ephemeral Hydra program is absent on the target ER");
 if (!protocolConfig || !configState) blockers.push("ProtocolConfig is not initialized");
 if (configState && !configState.admin.equals(wallet.publicKey)) blockers.push("ProtocolConfig admin does not match deployment wallet");
@@ -137,6 +140,10 @@ console.log(JSON.stringify({
     deployed: Boolean(appProgram?.executable),
     binarySize,
     requiredProgramRent: requiredProgramRent / 1_000_000_000,
+  },
+  sessionKeys: {
+    address: SESSION_PROGRAM_ID.toBase58(),
+    deployed: Boolean(sessionProgram?.executable),
   },
   hydra: { address: HYDRA_PROGRAM_ID.toBase58(), deployed: Boolean(hydraProgram?.executable) },
   oracle: { address: BTC_ORACLE.toBase58(), feedId: BTC_FEED_ID.toString("hex"), ...oracleState },

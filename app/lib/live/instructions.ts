@@ -115,6 +115,8 @@ export function delegateUserPositionsInstruction(
 
 export interface OpenPositionAccounts {
   user: PublicKey;
+  sessionSigner: PublicKey;
+  sessionToken: PublicKey;
   taskPayer: PublicKey;
   protocolConfig: PublicKey;
   market: PublicKey;
@@ -185,7 +187,8 @@ export function openPositionInstruction(
     programId,
     data: Buffer.from(data),
     keys: [
-      { pubkey: accounts.user, isSigner: true, isWritable: false },
+      { pubkey: accounts.user, isSigner: false, isWritable: false },
+      { pubkey: accounts.sessionSigner, isSigner: true, isWritable: false },
       { pubkey: accounts.taskPayer, isSigner: true, isWritable: true },
       { pubkey: accounts.protocolConfig, isSigner: false, isWritable: false },
       { pubkey: accounts.market, isSigner: false, isWritable: true },
@@ -203,6 +206,7 @@ export function openPositionInstruction(
       { pubkey: EPHEMERAL_VAULT_ID, isSigner: false, isWritable: true },
       { pubkey: MAGIC_PROGRAM_ID, isSigner: false, isWritable: false },
       { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      { pubkey: accounts.sessionToken, isSigner: false, isWritable: false },
     ],
   });
 }

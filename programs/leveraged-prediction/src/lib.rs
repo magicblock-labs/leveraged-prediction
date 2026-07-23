@@ -1,6 +1,7 @@
 use anchor_lang::prelude::*;
 use ephemeral_rollups_sdk::anchor::ephemeral;
 use hydra_api::instruction::ephemeral::find_crank_pda;
+use session_keys::{session_auth_or, SessionError};
 use solana_sha256_hasher::hashv;
 
 pub mod error;
@@ -253,6 +254,7 @@ pub mod leveraged_prediction {
         instructions::execute_withdrawal::handler(ctx)
     }
 
+    #[session_auth_or(false, SessionError::InvalidToken)]
     pub fn open_position(
         ctx: Context<OpenPosition>,
         nonce: u32,

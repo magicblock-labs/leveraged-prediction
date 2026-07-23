@@ -33,7 +33,10 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 cd "$REPO_ROOT"
-anchor build --ignore-keys
+NO_DNA=1 anchor build --ignore-keys
+solana program dump -u devnet \
+  KeyspM2ssCJbqUhQ4k7sveSiY4WjnYsrXkC8oDbwde5 \
+  "$RUN_DIR/session_keys.so"
 
 (
   cd "$RUN_DIR"
@@ -44,7 +47,9 @@ anchor build --ignore-keys
     --bpf-program PriCems5tHihc6UDXDjzjeawomAwBduWMGAi8ZUjppd \
     "$WORKSPACE_ROOT/leveraged-prediction-extras/tests/fixtures/ephemeral-oracle/target/deploy/ephemeral_oracle.so" \
     --bpf-program eHyd5BU8QffvHi4GnXwxrK4WpS7pM2x9UGKHBWii7mf \
-    "$WORKSPACE_ROOT/hydra/target/deploy/hydra_ephemeral.so"
+    "$WORKSPACE_ROOT/hydra/target/deploy/hydra_ephemeral.so" \
+    --bpf-program KeyspM2ssCJbqUhQ4k7sveSiY4WjnYsrXkC8oDbwde5 \
+    "$RUN_DIR/session_keys.so"
 ) >"$STACK_LOG" 2>&1 &
 STACK_PID=$!
 if [[ -n "$LOCAL_STACK_PID_FILE" ]]; then

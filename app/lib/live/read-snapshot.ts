@@ -24,9 +24,9 @@ import {
   getDelegationStatus,
   normalizeErEndpoint,
 } from "@/app/lib/live/router";
+import { positionToPlay } from "@/app/lib/live/position-stream";
 import { Buffer } from "buffer";
 
-const PRICE_SCALE = 10 ** ORACLE_EXPONENT;
 const historyByOracle = new Map<string, PricePoint[]>();
 
 function updateHistory(oracle: string, price: number, now: number): PricePoint[] {
@@ -36,31 +36,6 @@ function updateHistory(oracle: string, price: number, now: number): PricePoint[]
     .slice(-120);
   historyByOracle.set(oracle, next);
   return next;
-}
-
-function toPlay(
-  position: ReturnType<typeof decodeUserPositions>[number],
-  now: number,
-  currentPrice: number,
-): Play {
-  const expiresAt = position.expiresAt * 1_000;
-  const refundAt = expiresAt + 10_000;
-  const entryPrice = Number(position.entryPrice) / PRICE_SCALE;
-  const isFavorable =
-    position.direction === "up" ? currentPrice > entryPrice : currentPrice < entryPrice;
-  const status = now < expiresAt ? "active" : now < refundAt ? "settling" : "refunding";
-  return {
-    id: `${position.marketId}-${position.nonce}`,
-    marketId: position.marketId,
-    direction: position.direction,
-    collateralUsd: position.collateral / 1_000_000,
-    entryPrice,
-    openedAt: expiresAt - 10_000,
-    expiresAt,
-    refundAt,
-    status,
-    estimateUsd: isFavorable ? (position.collateral / 1_000_000) * 0.9 : -(position.collateral / 1_000_000),
-  };
 }
 
 export async function readLiveSnapshot(walletAddress?: string): Promise<MarketSnapshot> {
@@ -125,7 +100,7 @@ export async function readLiveSnapshot(walletAddress?: string): Promise<MarketSn
         }
         plays = decodeUserPositions(Buffer.from(positionsInfo.data))
           .filter((position) => position.marketId === config.marketId)
-          .map((position) => toPlay(position, now, price.displayPrice));
+          .map((position) => positionToPlay(position, now, price.displayPrice));
       }
     }
 

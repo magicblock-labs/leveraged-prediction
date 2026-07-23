@@ -4,9 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import { CommandDeck } from "@/app/components/command-deck";
 import { PriceArena } from "@/app/components/price-arena";
 import { YourPlays } from "@/app/components/your-plays";
+import { SessionGate } from "@/app/components/session-gate";
 import { useGameSnapshot } from "@/app/hooks/use-game-snapshot";
 import { useGameWallet } from "@/app/hooks/use-game-wallet";
+import { useGameSession } from "@/app/hooks/use-game-session";
 import { usePlayTransaction } from "@/app/hooks/use-play-transaction";
+import { useDevnetFaucet } from "@/app/hooks/use-devnet-faucet";
 import type { Direction } from "@/app/lib/domain";
 
 function compactAddress(address: string): string {
@@ -15,8 +18,10 @@ function compactAddress(address: string): string {
 
 export function GameArena() {
   const wallet = useGameWallet();
-  const { snapshot, error, oracleError, refreshing, refresh } = useGameSnapshot(wallet.address);
-  const transaction = usePlayTransaction(snapshot, refresh);
+  const { snapshot, error, oracleError, positionError, refreshing, refresh } = useGameSnapshot(wallet.address);
+  const session = useGameSession();
+  const transaction = usePlayTransaction(snapshot, refresh, session.session, session.refresh);
+  const faucet = useDevnetFaucet(wallet.address, refresh);
   const [clock, setClock] = useState<number | null>(null);
   const [feedback, setFeedback] = useState(true);
   const [showHelp, setShowHelp] = useState(false);
@@ -44,6 +49,14 @@ export function GameArena() {
   const placePlay = (direction: Direction, amount: number) => {
     if (feedback && "vibrate" in navigator) navigator.vibrate(24);
     void transaction.submit(direction, amount);
+  };
+
+  const requestTestFunds = () => {
+    if (!wallet.address) {
+      void wallet.connect();
+      return;
+    }
+    void faucet.fund();
   };
 
   if (!snapshot) {
@@ -79,6 +92,23 @@ export function GameArena() {
         <div className="hud-actions">
           <button className={`icon-button ${feedback ? "is-on" : ""}`} onClick={() => setFeedback((value) => !value)} type="button" aria-label={`${feedback ? "Disable" : "Enable"} haptic feedback`}>{feedback ? "◖))" : "◖×"}</button>
           <button className="help-button" onClick={() => setShowHelp(true)} type="button">? HOW TO PLAY</button>
+          {faucet.available ? (
+            <button
+              className="faucet-button"
+              disabled={faucet.busy}
+              onClick={requestTestFunds}
+              type="button"
+              title={faucet.targetSol !== null && faucet.targetUsdc !== null ? `Top up to ${faucet.targetSol} devnet SOL and $${faucet.targetUsdc} test USDC` : "Get devnet test funds"}
+            >
+              {faucet.busy ? "FUNDING…" : "GET TEST FUNDS"}
+            </button>
+          ) : null}
+          {wallet.address && session.ready ? (
+            <div className="session-pill" title="One-hour session spending allowance remaining">
+              <span>SESSION</span>
+              <strong>${session.remainingAllowanceUsd?.toFixed(2)}</strong>
+            </div>
+          ) : null}
           <div className="balance-block"><span>PLAY BALANCE</span><strong>{snapshot.walletBalanceUsd === null ? "—" : `$${snapshot.walletBalanceUsd.toFixed(2)}`}</strong></div>
           <button className="wallet-button" onClick={() => void wallet.connect()} disabled={wallet.connecting} type="button"><span className="wallet-led" />{walletLabel}</button>
         </div>
@@ -86,7 +116,9 @@ export function GameArena() {
 
       {error ? <div className="system-banner error" role="alert"><strong>LIVE UPDATE PAUSED</strong><span>{error}</span><button onClick={() => void refresh()} type="button">Retry</button></div> : null}
       {oracleError ? <div className="system-banner warning" role="status"><strong>REAL-TIME FEED DEGRADED</strong><span>{oracleError} · snapshot fallback remains active</span></div> : null}
+      {positionError ? <div className="system-banner warning" role="status"><strong>PLAY UPDATES DEGRADED</strong><span>{positionError} · snapshot fallback remains active</span></div> : null}
       {snapshot.marketMode === "close-only" ? <div className="system-banner warning" role="status"><strong>PLAY PAUSED</strong><span>This market is settling existing positions.</span></div> : null}
+      {faucet.message ? <div className={`faucet-toast ${faucet.tone}`} role={faucet.tone === "error" ? "alert" : "status"}>{faucet.message}</div> : null}
 
       <div className="game-board">
         <div className="arena-column">
@@ -95,6 +127,8 @@ export function GameArena() {
             snapshot={snapshot}
             occupiedPositions={plays.length}
             busy={transaction.busy}
+            sessionReady={session.ready}
+            sessionAllowanceUsd={session.remainingAllowanceUsd}
             statusMessage={transaction.statusMessage}
             needsRecovery={transaction.needsRecovery}
             onRecover={() => void transaction.recover()}
@@ -112,6 +146,19 @@ export function GameArena() {
       </div>
 
       <div className="mode-badge"><span className={refreshing ? "pulse" : ""} />{snapshot.notice}</div>
+
+      <SessionGate
+        visible={Boolean(wallet.address) && !session.ready}
+        busy={session.busy}
+        defaultAllowanceUsd={session.defaultAllowanceUsd}
+        walletBalanceUsd={snapshot.walletBalanceUsd}
+        status={session.progress}
+        error={session.error}
+        faucetAvailable={faucet.available}
+        faucetBusy={faucet.busy}
+        onStart={(amount) => void session.start(amount)}
+        onFund={requestTestFunds}
+      />
 
       {showHelp ? (
         <div className="dialog-backdrop" role="presentation" onMouseDown={() => setShowHelp(false)}>

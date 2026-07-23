@@ -1,4 +1,6 @@
 use super::*;
+use anchor_lang::solana_program::program_option::COption;
+use session_keys::{SessionTokenV2, SessionV2};
 
 pub fn handler(
     ctx: Context<OpenPosition>,
@@ -33,6 +35,12 @@ pub fn handler(
         sample.price >= min_entry_price && sample.price <= max_entry_price,
         ErrorCode::SlippageExceeded
     );
+    require_session_token_delegate(
+        ctx.accounts.user_token_account.delegate,
+        ctx.accounts.user_token_account.delegated_amount,
+        ctx.accounts.session_signer.key(),
+        collateral,
+    )?;
 
     let pool_before = ctx.accounts.pool_token_account.amount;
     let epoch_equity = if ctx.accounts.market.active_positions == 0 {
@@ -174,7 +182,7 @@ pub fn handler(
             SplTransfer {
                 from: ctx.accounts.user_token_account.to_account_info(),
                 to: ctx.accounts.pool_token_account.to_account_info(),
-                authority: ctx.accounts.user.to_account_info(),
+                authority: ctx.accounts.session_signer.to_account_info(),
             },
         ),
         collateral,
@@ -205,6 +213,23 @@ pub fn handler(
     Ok(())
 }
 
+fn require_session_token_delegate(
+    delegate: COption<Pubkey>,
+    delegated_amount: u64,
+    session_signer: Pubkey,
+    collateral: u64,
+) -> Result<()> {
+    require!(
+        delegate == COption::Some(session_signer),
+        ErrorCode::InvalidSessionTokenDelegate
+    );
+    require!(
+        delegated_amount >= collateral,
+        ErrorCode::InsufficientSessionTokenAllowance
+    );
+    Ok(())
+}
+
 fn settle_position_schedule_metas(
     accounts: crate::accounts::SettlePosition,
 ) -> Result<Vec<SchedMeta>> {
@@ -222,10 +247,12 @@ fn settle_position_schedule_metas(
         .collect()
 }
 
-#[derive(Accounts)]
+#[derive(Accounts, SessionV2)]
 #[instruction(nonce: u32, task_salt: [u8; 32])]
 pub struct OpenPosition<'info> {
-    pub user: Signer<'info>,
+    /// CHECK: Wallet authority bound to UserPositions, the session token, and the token account.
+    pub user: UncheckedAccount<'info>,
+    pub session_signer: Signer<'info>,
     #[account(mut)]
     pub task_payer: Signer<'info>,
     #[account(seeds = [CONFIG_SEED], bump = protocol_config.bump, has_one = collateral_mint)]
@@ -241,7 +268,11 @@ pub struct OpenPosition<'info> {
     pub derived_fee_authority: UncheckedAccount<'info>,
     #[account(mut, associated_token::mint = collateral_mint, associated_token::authority = derived_fee_authority)]
     pub fee_token_account: Box<Account<'info, TokenAccount>>,
-    #[account(mut)]
+    #[account(
+        mut,
+        constraint = user_token_account.owner == user.key() @ ErrorCode::InvalidTokenOwner,
+        constraint = user_token_account.mint == collateral_mint.key() @ ErrorCode::TokenMintMismatch
+    )]
     pub user_token_account: Box<Account<'info, TokenAccount>>,
     #[account(mut, associated_token::mint = collateral_mint, associated_token::authority = user_positions)]
     pub payout_escrow_token_account: Box<Account<'info, TokenAccount>>,
@@ -263,6 +294,8 @@ pub struct OpenPosition<'info> {
     #[account(address = MAGIC_PROGRAM_ID)]
     pub magic_program: UncheckedAccount<'info>,
     pub system_program: Program<'info, System>,
+    #[session(signer = session_signer, authority = user.key())]
+    pub session_token: Option<Account<'info, SessionTokenV2>>,
 }
 
 #[cfg(test)]
@@ -296,5 +329,38 @@ mod tests {
             assert_eq!(actual.pubkey, expected.pubkey.to_bytes());
             assert_eq!(actual.is_writable, expected.is_writable);
         }
+    }
+
+    #[test]
+    fn session_delegate_must_match_and_cover_collateral() {
+        let session_signer = Pubkey::new_unique();
+        assert!(require_session_token_delegate(
+            COption::Some(session_signer),
+            25_000_000,
+            session_signer,
+            25_000_000,
+        )
+        .is_ok());
+        assert!(require_session_token_delegate(
+            COption::None,
+            25_000_000,
+            session_signer,
+            25_000_000,
+        )
+        .is_err());
+        assert!(require_session_token_delegate(
+            COption::Some(Pubkey::new_unique()),
+            25_000_000,
+            session_signer,
+            25_000_000,
+        )
+        .is_err());
+        assert!(require_session_token_delegate(
+            COption::Some(session_signer),
+            24_999_999,
+            session_signer,
+            25_000_000,
+        )
+        .is_err());
     }
 }

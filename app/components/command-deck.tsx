@@ -8,6 +8,8 @@ interface CommandDeckProps {
   snapshot: MarketSnapshot;
   occupiedPositions: number;
   busy?: boolean;
+  sessionReady?: boolean;
+  sessionAllowanceUsd?: number | null;
   statusMessage?: string | null;
   needsRecovery?: boolean;
   onPlay(direction: Direction, amount: number): void;
@@ -16,18 +18,21 @@ interface CommandDeckProps {
 
 const PRESETS = [5, 10, 25];
 
-export function CommandDeck({ snapshot, occupiedPositions, busy = false, statusMessage, needsRecovery = false, onPlay, onRecover }: CommandDeckProps) {
+export function CommandDeck({ snapshot, occupiedPositions, busy = false, sessionReady = false, sessionAllowanceUsd = null, statusMessage, needsRecovery = false, onPlay, onRecover }: CommandDeckProps) {
   const inputId = useId();
   const [amount, setAmount] = useState(10);
   const capacityReached = occupiedPositions >= snapshot.maxPositions;
   const marketCapacityReached = snapshot.activePositions >= snapshot.maxPositions;
   const walletConnected = snapshot.walletAddress !== null;
   const hasBalance = snapshot.walletBalanceUsd !== null && snapshot.walletBalanceUsd >= amount;
-  const blocked = busy || needsRecovery || !walletConnected || !hasBalance || snapshot.marketMode !== "open" || capacityReached || marketCapacityReached;
-  const balanceMessage = walletConnected && !hasBalance
+  const hasSessionAllowance = sessionReady && sessionAllowanceUsd !== null && sessionAllowanceUsd >= amount;
+  const blocked = busy || needsRecovery || !walletConnected || !hasSessionAllowance || !hasBalance || snapshot.marketMode !== "open" || capacityReached || marketCapacityReached;
+  const fundingMessage = walletConnected && !hasBalance
     ? snapshot.walletBalanceUsd === null
       ? "USDC account setup is not ready"
       : `You need $${amount.toFixed(2)} USDC to play`
+    : sessionReady && !hasSessionAllowance
+      ? `Session has $${(sessionAllowanceUsd ?? 0).toFixed(2)} left · choose a smaller play`
     : null;
 
   return (
@@ -90,9 +95,9 @@ export function CommandDeck({ snapshot, occupiedPositions, busy = false, statusM
         </button>
         {capacityReached ? <p className="write-lock">{snapshot.maxPositions}/{snapshot.maxPositions} play slots filled · wait for a result</p> : null}
         {!capacityReached && marketCapacityReached ? <p className="write-lock">Arena is full · wait for a play to settle</p> : null}
-        {!capacityReached && !marketCapacityReached && (balanceMessage || statusMessage) ? (
+        {!capacityReached && !marketCapacityReached && (fundingMessage || statusMessage) ? (
           <div className={`write-lock ${needsRecovery ? "needs-action" : ""}`} role="status">
-            <span>{balanceMessage ?? statusMessage}</span>
+            <span>{fundingMessage ?? statusMessage}</span>
             {needsRecovery && onRecover ? <button onClick={onRecover} type="button">CHECK STATUS</button> : null}
           </div>
         ) : null}

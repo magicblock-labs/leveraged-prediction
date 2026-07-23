@@ -44,4 +44,12 @@ pub enum ErrorCode {
     InsufficientHydraSponsorLamports,
     #[msg("Hydra task creation failed")]
     HydraTaskCreationFailed,
+    #[msg("user token account is not owned by the session authority")]
+    InvalidTokenOwner,
+    #[msg("user token account mint does not match protocol collateral")]
+    TokenMintMismatch,
+    #[msg("session signer is not the approved token delegate")]
+    InvalidSessionTokenDelegate,
+    #[msg("session token allowance is smaller than the requested collateral")]
+    InsufficientSessionTokenAllowance,
 }

@@ -47,23 +47,25 @@ describe("final ABI write builders", () => {
   });
 
   it("encodes open_position arguments and exact account count", () => {
-    const keys = Array.from({ length: 13 }, (_, index) => new PublicKey(Uint8Array.from({ length: 32 }, () => index + 1)));
+    const keys = Array.from({ length: 15 }, (_, index) => new PublicKey(Uint8Array.from({ length: 32 }, () => index + 1)));
     const instruction = openPositionInstruction(
       PROGRAM_ID,
       {
         user: keys[0],
-        taskPayer: keys[1],
-        protocolConfig: keys[2],
-        market: keys[3],
-        userPositions: keys[4],
-        poolTokenAccount: keys[5],
-        derivedFeeAuthority: keys[6],
-        feeTokenAccount: keys[7],
-        userTokenAccount: keys[8],
-        payoutEscrowTokenAccount: keys[9],
-        collateralMint: keys[10],
-        priceUpdate: keys[11],
-        hydraCrank: keys[12],
+        sessionSigner: keys[1],
+        sessionToken: keys[2],
+        taskPayer: keys[3],
+        protocolConfig: keys[4],
+        market: keys[5],
+        userPositions: keys[6],
+        poolTokenAccount: keys[7],
+        derivedFeeAuthority: keys[8],
+        feeTokenAccount: keys[9],
+        userTokenAccount: keys[10],
+        payoutEscrowTokenAccount: keys[11],
+        collateralMint: keys[12],
+        priceUpdate: keys[13],
+        hydraCrank: keys[14],
       },
       {
         nonce: 17,
@@ -75,9 +77,11 @@ describe("final ABI write builders", () => {
       },
     );
 
-    expect(instruction.keys).toHaveLength(18);
-    expect(instruction.keys[0]).toMatchObject({ isSigner: true, isWritable: false });
-    expect(instruction.keys[1]).toMatchObject({ isSigner: true, isWritable: true });
+    expect(instruction.keys).toHaveLength(20);
+    expect(instruction.keys[0]).toMatchObject({ isSigner: false, isWritable: false });
+    expect(instruction.keys[1]).toMatchObject({ isSigner: true, isWritable: false });
+    expect(instruction.keys[2]).toMatchObject({ isSigner: true, isWritable: true });
+    expect(instruction.keys[19]).toMatchObject({ pubkey: keys[2], isSigner: false, isWritable: false });
     expect(instruction.data.subarray(0, 8)).toEqual(Buffer.from(instructionDiscriminators.openPosition));
     expect(instruction.data.readUInt32LE(8)).toBe(17);
     expect(instruction.data.subarray(12, 44)).toEqual(Buffer.alloc(32, 9));
@@ -99,6 +103,8 @@ describe("final ABI write builders", () => {
     const key = new PublicKey("11111111111111111111111111111112");
     expect(() => openPositionInstruction(PROGRAM_ID, {
       user: key,
+      sessionSigner: key,
+      sessionToken: key,
       taskPayer: key,
       protocolConfig: key,
       market: key,

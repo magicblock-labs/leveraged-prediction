@@ -27,6 +27,7 @@ import {
   PublicKey,
   SystemProgram,
   Transaction,
+  VersionedTransaction,
   type Signer,
 } from "@solana/web3.js";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -41,7 +42,13 @@ import { subscribeOraclePrice } from "@/app/lib/live/oracle-stream";
 import { feeAuthorityPda, marketPda, protocolConfigPda, userPositionsPda } from "@/app/lib/live/pdas";
 import { readLiveSnapshot } from "@/app/lib/live/read-snapshot";
 import { getDelegationStatus, normalizeErEndpoint } from "@/app/lib/live/router";
-import { openPositionFlow, type TransactionProgress } from "@/app/lib/live/transaction-flow";
+import {
+  createGameSessionFlow,
+  openPositionFlow,
+  type SessionProgress,
+  type TransactionProgress,
+} from "@/app/lib/live/transaction-flow";
+import type { StoredGameSession } from "@/app/lib/live/session-store";
 
 const enabled = process.env.LOCAL_E2E === "1";
 const keepLocalServices = process.env.KEEP_LOCAL_SERVICES === "1";
@@ -240,6 +247,7 @@ suite("local wallet-to-settlement flow", () => {
   let market: PublicKey;
   let userPositions: PublicKey;
   let userTokenAccount: PublicKey;
+  let gameSession: StoredGameSession;
   let cranker: ChildProcess | undefined;
   let crankerLogs = "";
   let crankerDirectory = "";
@@ -257,16 +265,19 @@ suite("local wallet-to-settlement flow", () => {
     process.env.LEVERAGED_PREDICTION_PROGRAM_ID = PROGRAM_ID.toBase58();
     process.env.LEVERAGED_PREDICTION_MARKET_ID = String(MARKET_ID);
 
-    const storage = new Map<string, string>();
+    const localStorage = new Map<string, string>();
+    const sessionStorage = new Map<string, string>();
+    const storageApi = (storage: Map<string, string>) => ({
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+      removeItem: (key: string) => storage.delete(key),
+      clear: () => storage.clear(),
+    });
     Object.assign(globalThis, {
       window: {
         setTimeout,
-        localStorage: {
-          getItem: (key: string) => storage.get(key) ?? null,
-          setItem: (key: string, value: string) => storage.set(key, value),
-          removeItem: (key: string) => storage.delete(key),
-          clear: () => storage.clear(),
-        },
+        localStorage: storageApi(localStorage),
+        sessionStorage: storageApi(sessionStorage),
       },
     });
 
@@ -451,9 +462,15 @@ suite("local wallet-to-settlement flow", () => {
       return response?.ok ?? false;
     });
 
-    const walletSend = async (transaction: Transaction, connection: Connection, options?: { signers?: Signer[] }) => {
-      transaction.partialSign(admin, ...(options?.signers ?? []));
-      return connection.sendRawTransaction(transaction.serialize(), { skipPreflight: false, maxRetries: 3 });
+    const walletSign = async <T extends Transaction | VersionedTransaction>(
+      transaction: T,
+    ): Promise<T> => {
+      if (transaction instanceof Transaction) {
+        transaction.partialSign(admin);
+      } else {
+        transaction.sign([admin]);
+      }
+      return transaction;
     };
     const signMessage = async (message: Uint8Array) => nacl.sign.detached(message, admin.secretKey);
     const { authorizeErAccess } = await import("@/app/lib/live/er-access");
@@ -462,6 +479,13 @@ suite("local wallet-to-settlement flow", () => {
       commitment: "confirmed",
       wsEndpoint: publicAccess.wsEndpoint,
     });
+    const sessionProgress: SessionProgress[] = [];
+    gameSession = await createGameSessionFlow(
+      admin.publicKey,
+      2,
+      walletSign,
+      (update) => sessionProgress.push(update),
+    );
     const progress: TransactionProgress[] = [];
     const play = async (direction: "up" | "down", entryPrice: number, settlementPrice: number) => {
       signatures.er.push(await sendTransaction(erConnection, new Transaction().add(
@@ -490,7 +514,8 @@ suite("local wallet-to-settlement flow", () => {
           admin.publicKey,
           direction,
           PLAY_USD,
-          walletSend,
+          gameSession,
+          walletSign,
           (update) => progress.push(update),
         );
       } finally {
@@ -582,8 +607,10 @@ suite("local wallet-to-settlement flow", () => {
     const finalSnapshot = await readLiveSnapshot(admin.publicKey.toBase58());
     expect(finalSnapshot.plays).toHaveLength(0);
     expect(finalSnapshot.walletBalanceUsd).toBeGreaterThan(Number(USER_COLLATERAL) / 1_000_000 - 1);
-    expect(progress.some((update) => update.phase === "initializing-positions")).toBe(true);
-    expect(progress.some((update) => update.phase === "provisioning-payout")).toBe(true);
+    expect(sessionProgress.some((update) => update.phase === "creating")).toBe(true);
+    expect(sessionProgress.some((update) => update.phase === "preparing-accounts")).toBe(true);
+    expect(sessionProgress.some((update) => update.phase === "approving")).toBe(true);
+    expect(sessionProgress.at(-1)?.phase).toBe("ready");
     expect(progress.filter((update) => update.phase === "accepted")).toHaveLength(2);
     expect(cranker?.exitCode).toBeNull();
 
@@ -593,6 +620,7 @@ suite("local wallet-to-settlement flow", () => {
       market: market.toBase58(),
       baseSignatures: signatures.base,
       erSignatures: signatures.er,
+      sessionPhases: sessionProgress.map((update) => update.phase),
       phases: progress.map((update) => update.phase),
       finalBalanceUsd: finalSnapshot.walletBalanceUsd,
       crankerHealthy: !cranker?.killed && cranker?.exitCode === null,
