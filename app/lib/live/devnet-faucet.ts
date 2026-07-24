@@ -87,20 +87,57 @@ function expandHome(path: string): string {
   return path.startsWith("~/") ? resolve(homedir(), path.slice(2)) : resolve(path);
 }
 
-async function loadAuthority(): Promise<Keypair> {
-  const configuredPath =
-    process.env.DEVNET_FAUCET_AUTHORITY_PATH ??
-    process.env.ANCHOR_WALLET ??
-    resolve(homedir(), ".config/solana/id.json");
-  const secret = JSON.parse(await readFile(expandHome(configuredPath), "utf8")) as unknown;
+function assertKeypairBytes(secret: unknown, source: string): Uint8Array {
   if (
     !Array.isArray(secret) ||
     secret.length !== 64 ||
     !secret.every((value) => Number.isInteger(value) && value >= 0 && value <= 255)
   ) {
-    throw new Error("Devnet faucet authority file is not a 64-byte Solana keypair");
+    throw new Error(`${source} must contain a 64-byte Solana keypair`);
   }
-  return Keypair.fromSecretKey(Uint8Array.from(secret));
+  return Uint8Array.from(secret);
+}
+
+export function decodeDevnetFaucetAuthorityBase64(encoded: string): Uint8Array {
+  const normalized = encoded.replace(/\s+/g, "");
+  if (!normalized || !/^[A-Za-z0-9+/]*={0,2}$/.test(normalized)) {
+    throw new Error("DEVNET_FAUCET_AUTHORITY_BASE64 is not valid base64");
+  }
+
+  const decoded = Buffer.from(normalized, "base64");
+  const canonical = decoded.toString("base64").replace(/=+$/, "");
+  if (canonical !== normalized.replace(/=+$/, "")) {
+    throw new Error("DEVNET_FAUCET_AUTHORITY_BASE64 is not valid base64");
+  }
+  if (decoded.length === 64) return Uint8Array.from(decoded);
+
+  let secret: unknown;
+  try {
+    secret = JSON.parse(decoded.toString("utf8")) as unknown;
+  } catch {
+    throw new Error(
+      "DEVNET_FAUCET_AUTHORITY_BASE64 must encode raw keypair bytes or a Solana keypair JSON array",
+    );
+  }
+  return assertKeypairBytes(secret, "DEVNET_FAUCET_AUTHORITY_BASE64");
+}
+
+async function loadAuthority(): Promise<Keypair> {
+  const encoded = process.env.DEVNET_FAUCET_AUTHORITY_BASE64?.trim();
+  if (encoded) {
+    try {
+      return Keypair.fromSecretKey(decodeDevnetFaucetAuthorityBase64(encoded));
+    } catch {
+      throw new Error("DEVNET_FAUCET_AUTHORITY_BASE64 does not contain a valid Solana keypair");
+    }
+  }
+
+  const configuredPath =
+    process.env.DEVNET_FAUCET_AUTHORITY_PATH ??
+    process.env.ANCHOR_WALLET ??
+    resolve(homedir(), ".config/solana/id.json");
+  const secret = JSON.parse(await readFile(expandHome(configuredPath), "utf8")) as unknown;
+  return Keypair.fromSecretKey(assertKeypairBytes(secret, "Devnet faucet authority file"));
 }
 
 async function readTokenAmount(
