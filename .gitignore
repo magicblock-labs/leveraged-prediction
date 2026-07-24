@@ -1,4 +1,5 @@
 /target
+/services/indexer/target
 /.anchor
 /.env
 /test-ledger

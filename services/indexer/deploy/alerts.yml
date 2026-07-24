@@ -1,0 +1,42 @@
+groups:
+  - name: leveraged-prediction-indexer
+    rules:
+      - alert: LeveragedPredictionIndexerStale
+        expr: leveraged_prediction_indexer_stale == 1
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: Leveraged Prediction indexer has exceeded its 120-second freshness budget
+      - alert: LeveragedPredictionIndexerFailures
+        expr: increase(leveraged_prediction_indexer_failures_total[5m]) >= 3
+        labels:
+          severity: page
+        annotations:
+          summary: Leveraged Prediction indexer has failed three cycles in five minutes
+      - alert: LeveragedPredictionDeadLetters
+        expr: increase(leveraged_prediction_indexer_dead_letters[15m]) > 0
+        labels:
+          severity: ticket
+        annotations:
+          summary: New undecodable Leveraged Prediction data requires review
+      - alert: LeveragedPredictionApiErrors
+        expr: rate(leveraged_prediction_api_errors_total[5m]) / clamp_min(rate(leveraged_prediction_api_requests_total[5m]), 0.001) > 0.05
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: Leveraged Prediction API error ratio is above 5%
+      - alert: LeveragedPredictionApiQueryTimeouts
+        expr: increase(leveraged_prediction_api_query_timeouts_total[5m]) > 5
+        labels:
+          severity: page
+        annotations:
+          summary: Leveraged Prediction API database queries are timing out
+      - alert: LeveragedPredictionProjectionStale
+        expr: leveraged_prediction_projection_stale == 1
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: Leveraged Prediction leaderboard projection is stale

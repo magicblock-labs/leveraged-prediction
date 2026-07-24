@@ -1,0 +1,1152 @@
+{
+  "components": {
+    "schemas": {
+      "Error": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "type": "object"
+      },
+      "Health": {
+        "properties": {
+          "database": {
+            "enum": [
+              "reachable",
+              "unavailable"
+            ],
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "live",
+              "ready",
+              "not_ready"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "LeaderboardEntry": {
+        "properties": {
+          "breakevens": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "losses": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "lp_fees": {
+            "$ref": "#/components/schemas/MinorUnits"
+          },
+          "net_pnl": {
+            "$ref": "#/components/schemas/MinorUnits"
+          },
+          "payout": {
+            "$ref": "#/components/schemas/MinorUnits"
+          },
+          "platform_fees": {
+            "$ref": "#/components/schemas/MinorUnits"
+          },
+          "rank": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "refunds": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "total_fees": {
+            "$ref": "#/components/schemas/MinorUnits"
+          },
+          "trades": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "user": {
+            "type": "string"
+          },
+          "volume": {
+            "$ref": "#/components/schemas/MinorUnits"
+          },
+          "win_rate_bps": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "wins": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rank",
+          "user",
+          "trades",
+          "wins",
+          "losses",
+          "breakevens",
+          "refunds",
+          "volume",
+          "payout",
+          "net_pnl",
+          "lp_fees",
+          "platform_fees",
+          "total_fees",
+          "win_rate_bps"
+        ],
+        "type": "object"
+      },
+      "LeaderboardPage": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/LeaderboardEntry"
+            },
+            "type": "array"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ResponseMeta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "type": "object"
+      },
+      "LiquidityEvent": {
+        "properties": {
+          "assets": {
+            "$ref": "#/components/schemas/NullableMinorUnits"
+          },
+          "event_kind": {
+            "type": "string"
+          },
+          "instruction_path": {
+            "type": "string"
+          },
+          "market_id": {
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "min_assets_out": {
+            "$ref": "#/components/schemas/NullableMinorUnits"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "shares": {
+            "$ref": "#/components/schemas/MinorUnits"
+          },
+          "signature": {
+            "type": "string"
+          },
+          "user": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "signature",
+          "instruction_path",
+          "event_kind",
+          "market_id",
+          "user",
+          "assets",
+          "shares",
+          "min_assets_out",
+          "occurred_at"
+        ],
+        "type": "object"
+      },
+      "LiquidityPage": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/LiquidityEvent"
+            },
+            "type": "array"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ResponseMeta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "type": "object"
+      },
+      "MarketSummary": {
+        "properties": {
+          "active_positions": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "last_slot": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "market_id": {
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "market_pubkey": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "open_collateral": {
+            "$ref": "#/components/schemas/NullableMinorUnits"
+          },
+          "pool_balance": {
+            "$ref": "#/components/schemas/NullableMinorUnits"
+          },
+          "total_shares": {
+            "$ref": "#/components/schemas/NullableMinorUnits"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "market_id",
+          "market_pubkey",
+          "mode",
+          "total_shares",
+          "open_collateral",
+          "active_positions",
+          "pool_balance",
+          "last_slot",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "MarketSummaryResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/MarketSummary"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ResponseMeta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "type": "object"
+      },
+      "MinorUnits": {
+        "description": "Exact collateral minor units; never a JSON number.",
+        "pattern": "^-?[0-9]+$",
+        "type": "string"
+      },
+      "NullableMinorUnits": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/MinorUnits"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "Position": {
+        "properties": {
+          "checkpoint_status": {
+            "enum": [
+              "er_only",
+              "base_observed",
+              "not_applicable"
+            ],
+            "type": "string"
+          },
+          "closed_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "collateral": {
+            "$ref": "#/components/schemas/NullableMinorUnits"
+          },
+          "direction": {
+            "enum": [
+              "up",
+              "down",
+              null
+            ],
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "entry_price": {
+            "pattern": "^-?[0-9]+$",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lifecycle_status": {
+            "enum": [
+              "open",
+              "settled",
+              "refunded"
+            ],
+            "type": "string"
+          },
+          "lp_fee_amount": {
+            "$ref": "#/components/schemas/NullableMinorUnits"
+          },
+          "market_id": {
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "net_pnl": {
+            "$ref": "#/components/schemas/NullableMinorUnits"
+          },
+          "opened_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "outcome": {
+            "enum": [
+              "won",
+              "lost",
+              "breakeven",
+              "refunded",
+              null
+            ],
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "payout_amount": {
+            "$ref": "#/components/schemas/NullableMinorUnits"
+          },
+          "platform_fee_amount": {
+            "$ref": "#/components/schemas/NullableMinorUnits"
+          },
+          "position_id": {
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total_fee_amount": {
+            "$ref": "#/components/schemas/NullableMinorUnits"
+          },
+          "user": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "market_id",
+          "position_id",
+          "user",
+          "direction",
+          "entry_price",
+          "collateral",
+          "expires_at",
+          "lifecycle_status",
+          "checkpoint_status",
+          "outcome",
+          "payout_amount",
+          "lp_fee_amount",
+          "platform_fee_amount",
+          "total_fee_amount",
+          "net_pnl",
+          "opened_at",
+          "closed_at"
+        ],
+        "type": "object"
+      },
+      "PositionPage": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/Position"
+            },
+            "type": "array"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ResponseMeta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "type": "object"
+      },
+      "PositionResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Position"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ResponseMeta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "type": "object"
+      },
+      "ResponseMeta": {
+        "properties": {
+          "as_of": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "next_cursor": {
+            "type": "string"
+          },
+          "projection_high_water_mark": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "refresh_version": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "stale": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "as_of",
+          "projection_high_water_mark",
+          "refresh_version",
+          "stale"
+        ],
+        "type": "object"
+      },
+      "UserStats": {
+        "properties": {
+          "breakevens": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "losses": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "lp_fees": {
+            "$ref": "#/components/schemas/MinorUnits"
+          },
+          "market_id": {
+            "maximum": 65535,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "net_pnl": {
+            "$ref": "#/components/schemas/MinorUnits"
+          },
+          "payout": {
+            "$ref": "#/components/schemas/MinorUnits"
+          },
+          "period": {
+            "enum": [
+              "today",
+              "week",
+              "month",
+              "all"
+            ],
+            "type": "string"
+          },
+          "platform_fees": {
+            "$ref": "#/components/schemas/MinorUnits"
+          },
+          "rank": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "refunds": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "total_fees": {
+            "$ref": "#/components/schemas/MinorUnits"
+          },
+          "trades": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "user": {
+            "type": "string"
+          },
+          "volume": {
+            "$ref": "#/components/schemas/MinorUnits"
+          },
+          "win_rate_bps": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "wins": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "user",
+          "period",
+          "market_id",
+          "trades",
+          "wins",
+          "losses",
+          "breakevens",
+          "refunds",
+          "volume",
+          "payout",
+          "net_pnl",
+          "lp_fees",
+          "platform_fees",
+          "total_fees",
+          "win_rate_bps",
+          "rank"
+        ],
+        "type": "object"
+      },
+      "UserStatsResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/UserStats"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ResponseMeta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "Read-only indexed history and leaderboard API. Live gameplay remains on direct ER RPC/websocket paths.",
+    "title": "Leveraged Prediction Read API",
+    "version": "1.0.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/health/live": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            },
+            "description": "Process is live"
+          }
+        }
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            },
+            "description": "Database is reachable"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            },
+            "description": "Database is unavailable"
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Prometheus text metrics"
+          }
+        }
+      }
+    },
+    "/v1/leaderboards": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "period",
+            "schema": {
+              "default": "all",
+              "enum": [
+                "today",
+                "week",
+                "month",
+                "all"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "market_id",
+            "schema": {
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "maxLength": 512,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LeaderboardPage"
+                }
+              }
+            },
+            "description": "Leaderboard page"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Cursor refresh version is stale"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Index unavailable"
+          }
+        }
+      }
+    },
+    "/v1/markets/{market_id}/summary": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "market_id",
+            "required": true,
+            "schema": {
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketSummaryResponse"
+                }
+              }
+            },
+            "description": "Current indexed Market summary"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Cursor refresh version is stale"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Index unavailable"
+          }
+        }
+      }
+    },
+    "/v1/positions/{market_id}/{position_id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "market_id",
+            "required": true,
+            "schema": {
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "position_id",
+            "required": true,
+            "schema": {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PositionResponse"
+                }
+              }
+            },
+            "description": "Canonical position"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Cursor refresh version is stale"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Index unavailable"
+          }
+        }
+      }
+    },
+    "/v1/users/{wallet}/liquidity": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wallet",
+            "required": true,
+            "schema": {
+              "maxLength": 44,
+              "minLength": 32,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "market_id",
+            "schema": {
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "maxLength": 512,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LiquidityPage"
+                }
+              }
+            },
+            "description": "Liquidity history page"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Cursor refresh version is stale"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Index unavailable"
+          }
+        }
+      }
+    },
+    "/v1/users/{wallet}/positions": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wallet",
+            "required": true,
+            "schema": {
+              "maxLength": 44,
+              "minLength": 32,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "market_id",
+            "schema": {
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "enum": [
+                "open",
+                "closed",
+                "refunded"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "maxLength": 512,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PositionPage"
+                }
+              }
+            },
+            "description": "Position history page"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Cursor refresh version is stale"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Index unavailable"
+          }
+        }
+      }
+    },
+    "/v1/users/{wallet}/stats": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wallet",
+            "required": true,
+            "schema": {
+              "maxLength": 44,
+              "minLength": 32,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "period",
+            "schema": {
+              "default": "all",
+              "enum": [
+                "today",
+                "week",
+                "month",
+                "all"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "market_id",
+            "schema": {
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserStatsResponse"
+                }
+              }
+            },
+            "description": "User aggregate"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Cursor refresh version is stale"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Index unavailable"
+          }
+        }
+      }
+    }
+  }
+}

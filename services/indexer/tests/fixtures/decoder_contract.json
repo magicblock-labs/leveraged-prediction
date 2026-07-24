@@ -1,0 +1,50 @@
+{
+  "program_id": "AcvFWjSFrLAAWMynqQmBxeBe8wHRTVhhHtB6byatQLFr",
+  "accounts": {
+    "Market": [219, 190, 213, 55, 0, 227, 198, 154],
+    "ProtocolConfig": [207, 91, 250, 28, 152, 179, 215, 209],
+    "UserLiquidity": [231, 187, 233, 254, 66, 35, 139, 26],
+    "UserPositions": [97, 163, 100, 87, 105, 248, 138, 152]
+  },
+  "instructions": {
+    "cancel_withdrawal": [183, 104, 181, 250, 28, 128, 210, 70],
+    "claim_fallback_payout": [215, 117, 24, 176, 107, 179, 59, 212],
+    "delegate_market": [223, 125, 110, 148, 99, 176, 143, 72],
+    "delegate_user_liquidity": [213, 222, 197, 230, 173, 223, 102, 167],
+    "delegate_user_positions": [147, 104, 221, 210, 31, 52, 34, 53],
+    "deposit_liquidity": [245, 99, 59, 25, 151, 71, 233, 249],
+    "execute_withdrawal": [113, 121, 203, 232, 137, 139, 248, 249],
+    "initialize_market": [35, 35, 189, 193, 155, 48, 170, 203],
+    "initialize_protocol_config": [28, 50, 43, 233, 244, 98, 123, 118],
+    "initialize_user_liquidity": [250, 167, 58, 109, 173, 95, 219, 138],
+    "initialize_user_positions": [6, 119, 238, 168, 19, 38, 23, 113],
+    "open_position": [135, 128, 47, 77, 15, 152, 240, 49],
+    "process_undelegation": [196, 28, 41, 206, 48, 37, 51, 167],
+    "request_withdrawal": [251, 85, 121, 205, 56, 201, 12, 177],
+    "set_market_mode": [189, 249, 103, 37, 28, 219, 101, 245],
+    "settle_position": [33, 156, 74, 218, 215, 42, 112, 175],
+    "undelegate_user_liquidity": [233, 109, 39, 9, 126, 220, 233, 212],
+    "withdraw_protocol_fees": [11, 68, 165, 98, 18, 208, 134, 73]
+  },
+  "events": {
+    "FallbackPayoutClaimed": [180, 60, 123, 94, 7, 16, 234, 28],
+    "LiquidityDeposited": [218, 155, 74, 193, 59, 66, 94, 122],
+    "MarketModeChanged": [102, 84, 205, 59, 243, 49, 7, 130],
+    "PositionClosed": [157, 163, 227, 228, 13, 97, 138, 121],
+    "PositionCreated": [63, 226, 54, 63, 141, 22, 31, 221],
+    "ProtocolFeesWithdrawn": [202, 213, 134, 216, 108, 14, 84, 99],
+    "WithdrawalCancelled": [119, 175, 207, 80, 186, 237, 229, 9],
+    "WithdrawalExecuted": [37, 78, 199, 192, 51, 68, 173, 162],
+    "WithdrawalRequested": [75, 207, 21, 12, 160, 102, 150, 55]
+  },
+  "enum_order": {
+    "Direction": ["Up", "Down"],
+    "MarketMode": ["Open", "CloseOnly"],
+    "PositionOutcome": [
+      "Won",
+      "Lost",
+      "Breakeven",
+      "Refunded"
+    ]
+  }
+}

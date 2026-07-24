@@ -65,46 +65,52 @@ pub fn require_market_financial_capacity(active_positions: u32) -> Result<()> {
     Ok(())
 }
 
+#[event]
+pub struct PositionCreated {
+    pub market_id: u16,
+    pub position_id: u32,
+    pub user: Pubkey,
+    pub entry_price: i64,
+    pub collateral: u32,
+    pub direction: Direction,
+    pub expires_at: u32,
+}
+
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SettleOutcome {
-    AlreadyProcessed,
-    PreExpiry,
-    OracleNotReady,
-    OracleOutsideWindow,
-    Settled,
+pub enum PositionOutcome {
+    Won,
+    Lost,
+    Breakeven,
     Refunded,
 }
 
 #[event]
-pub struct SettlePositionResult {
-    pub nonce: u32,
-    pub outcome: SettleOutcome,
-    pub processed_at: i64,
-    pub expires_at: i64,
-    pub refund_at: i64,
-    pub entry_price: i64,
-    pub settlement_price: i64,
-    pub oracle_publish_time: i64,
+pub struct PositionClosed {
+    pub market_id: u16,
+    pub position_id: u32,
+    pub outcome: PositionOutcome,
+    pub payout_amount: u64,
+    pub lp_fee_amount: u64,
+    pub platform_fee_amount: u64,
 }
 
 #[event]
 pub struct MarketModeChanged {
-    pub market: Pubkey,
+    pub market_id: u16,
     pub mode: MarketMode,
 }
 
 #[event]
 pub struct LiquidityDeposited {
-    pub market: Pubkey,
+    pub market_id: u16,
     pub user: Pubkey,
     pub assets: u64,
     pub shares: u128,
-    pub equity_after: u64,
 }
 
 #[event]
 pub struct WithdrawalRequested {
-    pub market: Pubkey,
+    pub market_id: u16,
     pub user: Pubkey,
     pub shares: u128,
     pub min_assets_out: u64,
@@ -112,23 +118,22 @@ pub struct WithdrawalRequested {
 
 #[event]
 pub struct WithdrawalCancelled {
-    pub market: Pubkey,
+    pub market_id: u16,
     pub user: Pubkey,
     pub shares: u128,
 }
 
 #[event]
 pub struct WithdrawalExecuted {
-    pub market: Pubkey,
+    pub market_id: u16,
     pub user: Pubkey,
     pub shares: u128,
     pub assets: u64,
-    pub equity_after: u64,
 }
 
 #[event]
 pub struct ProtocolFeesWithdrawn {
-    pub market: Pubkey,
+    pub market_id: u16,
     pub destination: Pubkey,
     pub assets: u64,
 }
@@ -140,12 +145,7 @@ pub struct FallbackPayoutClaimed {
     pub assets: u64,
 }
 
-pub fn settlement_task_id(
-    market: Pubkey,
-    user: Pubkey,
-    nonce: u32,
-    task_salt: [u8; 32],
-) -> i64 {
+pub fn settlement_task_id(market: Pubkey, user: Pubkey, nonce: u32, task_salt: [u8; 32]) -> i64 {
     let digest = hashv(&[
         b"leveraged_prediction_position",
         market.as_ref(),
@@ -297,6 +297,12 @@ pub mod leveraged_prediction {
 mod address_tests {
     use super::*;
 
+    fn serialized<T: AnchorSerialize>(value: &T) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        value.serialize(&mut bytes).unwrap();
+        bytes
+    }
+
     #[test]
     fn position_task_salt_changes_the_scheduler_task_id() {
         let market = Pubkey::new_unique();
@@ -344,6 +350,34 @@ mod address_tests {
 
         assert_ne!(first_positions, first_liquidity);
         assert_ne!(first_positions, second_positions);
+    }
+
+    #[test]
+    fn compact_position_event_payload_sizes_and_enum_order_are_locked() {
+        let created = PositionCreated {
+            market_id: 1,
+            position_id: 7,
+            user: Pubkey::new_unique(),
+            entry_price: 100_000,
+            collateral: 1_000_000,
+            direction: Direction::Up,
+            expires_at: 42,
+        };
+        let closed = PositionClosed {
+            market_id: 1,
+            position_id: 7,
+            outcome: PositionOutcome::Won,
+            payout_amount: 1_900_000,
+            lp_fee_amount: 80_000,
+            platform_fee_amount: 20_000,
+        };
+
+        assert_eq!(serialized(&created).len(), 55);
+        assert_eq!(serialized(&closed).len(), 31);
+        assert_eq!(serialized(&PositionOutcome::Won), [0]);
+        assert_eq!(serialized(&PositionOutcome::Lost), [1]);
+        assert_eq!(serialized(&PositionOutcome::Breakeven), [2]);
+        assert_eq!(serialized(&PositionOutcome::Refunded), [3]);
     }
 
     #[test]
@@ -400,7 +434,6 @@ mod address_tests {
             );
         }
     }
-
 }
 
 #[cfg(test)]

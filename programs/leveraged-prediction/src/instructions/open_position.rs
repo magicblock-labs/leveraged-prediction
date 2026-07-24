@@ -1,9 +1,9 @@
 use super::*;
+use anchor_lang::solana_program::program_option::COption;
 use anchor_lang::solana_program::{
     instruction::{AccountMeta, Instruction},
     program::invoke_signed,
 };
-use anchor_lang::solana_program::program_option::COption;
 use session_keys::{SessionTokenV2, SessionV2};
 
 pub fn handler(
@@ -15,10 +15,7 @@ pub fn handler(
     min_entry_price: i64,
     max_entry_price: i64,
 ) -> Result<()> {
-    require!(
-        task_salt != [0_u8; 32],
-        ErrorCode::InvalidSettlementTask
-    );
+    require!(task_salt != [0_u8; 32], ErrorCode::InvalidSettlementTask);
     require!(
         ctx.accounts.market.mode == MarketMode::Open,
         ErrorCode::MarketCloseOnly
@@ -121,8 +118,8 @@ pub fn handler(
     let market_id = ctx.accounts.market.market_id.to_le_bytes();
     let market_bump = [ctx.accounts.market.bump];
     let market_signer_seeds: &[&[u8]] = &[MARKET_SEED, market_id.as_ref(), &market_bump];
-    let schedule_data = bincode::serialize(&MagicBlockInstruction::ScheduleTask(
-        ScheduleTaskArgs {
+    let schedule_data =
+        bincode::serialize(&MagicBlockInstruction::ScheduleTask(ScheduleTaskArgs {
             task_id: settlement_task_id(
                 ctx.accounts.market.key(),
                 ctx.accounts.user.key(),
@@ -132,9 +129,8 @@ pub fn handler(
             execution_interval_millis: SETTLEMENT_TASK_INTERVAL_MILLIS,
             iterations: SETTLEMENT_TASK_ITERATIONS,
             instructions: vec![scheduled_instruction],
-        },
-    ))
-    .map_err(|_| error!(ErrorCode::SettlementTaskCreationFailed))?;
+        }))
+        .map_err(|_| error!(ErrorCode::SettlementTaskCreationFailed))?;
     let mut schedule_metas = Vec::with_capacity(1 + settlement_accounts.len());
     schedule_metas.push(AccountMeta::new(ctx.accounts.market.key(), true));
     schedule_metas.extend(settlement_accounts.iter().map(|account| AccountMeta {
@@ -188,6 +184,15 @@ pub fn handler(
         .ok_or(ErrorCode::MathOverflow)?;
     ctx.accounts.market.next_position_nonce =
         nonce.checked_add(1).ok_or(ErrorCode::MathOverflow)?;
+    emit!(PositionCreated {
+        market_id: ctx.accounts.market.market_id,
+        position_id: nonce,
+        user: ctx.accounts.user.key(),
+        entry_price: sample.price,
+        collateral: compact_collateral,
+        direction,
+        expires_at: compact_expires_at,
+    });
     Ok(())
 }
 

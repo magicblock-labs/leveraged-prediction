@@ -875,6 +875,81 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--ink); outli
   font-size: 12px;
 }
 
+/* ── indexed history (read-only, outside gameplay path) ── */
+.indexed-history {
+  width: calc(100% - 40px);
+  max-width: 1160px;
+  margin: 8px auto 48px;
+  padding: 20px;
+  border: 1px solid var(--hair);
+  border-radius: 16px;
+  background: var(--card);
+}
+.indexed-history > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+.indexed-history h2,
+.indexed-history h3,
+.indexed-history p { margin: 0; }
+.indexed-history h2 { margin-top: 3px; font-size: 20px; letter-spacing: -0.2px; }
+.indexed-history h3 { margin-bottom: 8px; font-size: 12px; color: var(--mut); text-transform: uppercase; letter-spacing: 0.06em; }
+.indexed-history p { padding: 14px 0; color: var(--mut); font-size: 12.5px; }
+.history-state {
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: var(--wait-tint);
+  color: var(--wait);
+  font-size: 11px;
+  font-weight: 700;
+}
+.history-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 28px;
+}
+.leader-row,
+.history-row {
+  display: grid;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  border-top: 1px solid var(--hair);
+  font-size: 13px;
+}
+.leader-row { grid-template-columns: 34px minmax(0, 1fr) auto; }
+.history-row { grid-template-columns: 18px minmax(0, 1fr) auto auto; }
+.leader-row > span:first-child,
+.history-row small { color: var(--mut); }
+.history-row small { font-size: 10.5px; }
+.history-more,
+.history-unavailable button {
+  min-height: 34px;
+  margin-top: 10px;
+  padding: 0 13px;
+  border: 1px solid var(--hair);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+}
+.history-more:hover:not(:disabled),
+.history-unavailable button:hover { border-color: var(--mut); }
+.indexed-history .history-note { padding: 8px 0 0; font-size: 11px; }
+.history-unavailable {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 12px;
+  background: var(--wait-tint);
+}
+.history-unavailable strong { color: var(--wait); font-size: 13px; }
+.history-unavailable span { min-width: 0; flex: 1; color: var(--mut); font-size: 12px; }
+.history-unavailable button { flex: 0 0 auto; margin: 0; }
+
 @keyframes soft-pulse { 50% { opacity: 0.25; } }
 
 /* ── desktop: full-height chart, right order rail ───── */
@@ -933,6 +1008,11 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--ink); outli
   }
   .liquidity-columns { grid-template-columns: 1fr; }
   .pending-withdrawal { align-items: flex-start; flex-direction: column; }
+  .indexed-history { width: calc(100% - 28px); margin-top: 0; padding: 16px; }
+  .history-grid { grid-template-columns: 1fr; gap: 24px; }
+  .history-row { grid-template-columns: 18px minmax(0, 1fr) auto; }
+  .history-row small { display: none; }
+  .history-unavailable { align-items: flex-start; flex-direction: column; }
 }
 @media (max-width: 410px) {
   .mark { font-size: 19px; }

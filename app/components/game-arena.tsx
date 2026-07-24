@@ -6,11 +6,13 @@ import { PriceArena } from "@/app/components/price-arena";
 import { YourPlays } from "@/app/components/your-plays";
 import { SessionGate } from "@/app/components/session-gate";
 import { RouteNav } from "@/app/components/route-nav";
+import { IndexedHistory } from "@/app/components/indexed-history";
 import { useGameSnapshot } from "@/app/hooks/use-game-snapshot";
 import { useGameWallet } from "@/app/hooks/use-game-wallet";
 import { useGameSession } from "@/app/hooks/use-game-session";
 import { usePlayTransaction } from "@/app/hooks/use-play-transaction";
 import { useDevnetFaucet } from "@/app/hooks/use-devnet-faucet";
+import { useIndexedHistory } from "@/app/hooks/use-indexed-history";
 import type { Direction } from "@/app/lib/domain";
 
 function compactAddress(address: string): string {
@@ -23,6 +25,7 @@ export function GameArena() {
   const session = useGameSession();
   const transaction = usePlayTransaction(snapshot, refresh, session.session, session.refresh);
   const faucet = useDevnetFaucet(wallet.address, refresh);
+  const indexed = useIndexedHistory(wallet.address, snapshot?.marketId ?? null);
   const [clock, setClock] = useState<number | null>(null);
   const [feedback, setFeedback] = useState(true);
   const [showHelp, setShowHelp] = useState(false);
@@ -184,6 +187,19 @@ export function GameArena() {
           />
         </aside>
       </div>
+
+      <IndexedHistory
+        enabled={indexed.status !== "disabled"}
+        status={indexed.status}
+        leaderboard={indexed.leaderboard}
+        positions={indexed.positions}
+        message={indexed.message}
+        hasMore={Boolean(indexed.positionMeta?.next_cursor)}
+        loadingMore={indexed.loadingMore}
+        restartedPagination={indexed.restartedPagination}
+        onLoadMore={indexed.loadMore}
+        onRetry={indexed.retry}
+      />
 
       <div className="mode-badge"><span className={refreshing ? "pulse" : ""} />{snapshot.notice}</div>
 

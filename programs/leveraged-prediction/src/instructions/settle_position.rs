@@ -7,16 +7,6 @@ pub fn handler(ctx: Context<SettlePosition>, nonce: u32, task_salt: [u8; 32]) ->
         .user_positions
         .position_index(ctx.accounts.market.market_id, nonce)
     else {
-        emit!(SettlePositionResult {
-            nonce,
-            outcome: SettleOutcome::AlreadyProcessed,
-            processed_at: clock.unix_timestamp,
-            expires_at: 0,
-            refund_at: 0,
-            entry_price: 0,
-            settlement_price: 0,
-            oracle_publish_time: 0,
-        });
         msg!("position already processed or unknown; no-op");
         return Ok(());
     };
@@ -32,22 +22,12 @@ pub fn handler(ctx: Context<SettlePosition>, nonce: u32, task_salt: [u8; 32]) ->
         .checked_add(SETTLEMENT_BUFFER_SECONDS)
         .ok_or(ErrorCode::MathOverflow)?;
     if now < expires_at {
-        emit!(SettlePositionResult {
-            nonce,
-            outcome: SettleOutcome::PreExpiry,
-            processed_at: now,
-            expires_at,
-            refund_at,
-            entry_price: position.entry_price,
-            settlement_price: 0,
-            oracle_publish_time: 0,
-        });
         msg!("position not expired; no-op");
         return Ok(());
     }
     let is_refund = now >= refund_at;
-    let (user_payout, protocol_fee, settlement_price, oracle_publish_time) = if is_refund {
-        (collateral, 0, 0, 0)
+    let (user_payout, protocol_fee, lp_fee, outcome) = if is_refund {
+        (collateral, 0, 0, PositionOutcome::Refunded)
     } else {
         let sample = match read_oracle_price(
             &ctx.accounts.price_update.to_account_info(),
@@ -56,32 +36,12 @@ pub fn handler(ctx: Context<SettlePosition>, nonce: u32, task_salt: [u8; 32]) ->
         ) {
             Ok(Some(sample)) => sample,
             Ok(None) => {
-                emit!(SettlePositionResult {
-                    nonce,
-                    outcome: SettleOutcome::OracleNotReady,
-                    processed_at: now,
-                    expires_at,
-                    refund_at,
-                    entry_price: position.entry_price,
-                    settlement_price: 0,
-                    oracle_publish_time: 0,
-                });
                 msg!("qualifying oracle sample not ready; no-op");
                 return Ok(());
             }
             Err(error) => return Err(error),
         };
         if sample.publish_time < expires_at || sample.publish_time >= refund_at {
-            emit!(SettlePositionResult {
-                nonce,
-                outcome: SettleOutcome::OracleOutsideWindow,
-                processed_at: now,
-                expires_at,
-                refund_at,
-                entry_price: position.entry_price,
-                settlement_price: sample.price,
-                oracle_publish_time: sample.publish_time,
-            });
             msg!("oracle sample outside settlement interval; no-op");
             return Ok(());
         }
@@ -94,11 +54,12 @@ pub fn handler(ctx: Context<SettlePosition>, nonce: u32, task_salt: [u8; 32]) ->
             PROFIT_FEE_BPS,
             PROTOCOL_FEE_SHARE_BPS,
         )?;
+        let outcome = position_outcome(false, amounts.gross_profit, amounts.loss);
         (
             amounts.user_payout,
             amounts.protocol_fee,
-            sample.price,
-            sample.publish_time,
+            amounts.lp_fee,
+            outcome,
         )
     };
 
@@ -145,21 +106,27 @@ pub fn handler(ctx: Context<SettlePosition>, nonce: u32, task_salt: [u8; 32]) ->
         .active_positions
         .checked_sub(1)
         .ok_or(ErrorCode::MathOverflow)?;
-    emit!(SettlePositionResult {
-        nonce,
-        outcome: if is_refund {
-            SettleOutcome::Refunded
-        } else {
-            SettleOutcome::Settled
-        },
-        processed_at: now,
-        expires_at,
-        refund_at,
-        entry_price: position.entry_price,
-        settlement_price,
-        oracle_publish_time,
+    emit!(PositionClosed {
+        market_id: ctx.accounts.market.market_id,
+        position_id: nonce,
+        outcome,
+        payout_amount: user_payout,
+        lp_fee_amount: lp_fee,
+        platform_fee_amount: protocol_fee,
     });
     Ok(())
+}
+
+const fn position_outcome(is_refund: bool, gross_profit: u64, loss: u64) -> PositionOutcome {
+    if is_refund {
+        PositionOutcome::Refunded
+    } else if gross_profit > 0 {
+        PositionOutcome::Won
+    } else if loss > 0 {
+        PositionOutcome::Lost
+    } else {
+        PositionOutcome::Breakeven
+    }
 }
 
 #[derive(Accounts)]
@@ -193,4 +160,25 @@ pub struct SettlePosition<'info> {
         address = settlement_crank_signer(market.key()) @ ErrorCode::InvalidSettlementTrigger
     )]
     pub crank_signer: Signer<'info>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminal_outcomes_are_unambiguous() {
+        assert_eq!(position_outcome(false, 1, 0), PositionOutcome::Won);
+        assert_eq!(position_outcome(false, 0, 1), PositionOutcome::Lost);
+        assert_eq!(position_outcome(false, 0, 0), PositionOutcome::Breakeven);
+        assert_eq!(position_outcome(true, 1, 1), PositionOutcome::Refunded);
+    }
+
+    #[test]
+    fn retry_and_noop_paths_have_no_domain_event_emission() {
+        let source = include_str!("settle_position.rs");
+        let emit_marker = ["emit", "!("].concat();
+        assert_eq!(source.matches(&emit_marker).count(), 1);
+        assert!(!source.contains(&["Settle", "PositionResult"].concat()));
+    }
 }

@@ -1,0 +1,21 @@
+{
+  "contract": [
+    "leaderboard pagination",
+    "stale leaderboard cursor",
+    "invalid wallet error envelope",
+    "database timeout error envelope",
+    "stale projection metadata",
+    "minor-unit precision beyond JavaScript safe integers",
+    "user stats",
+    "position history",
+    "liquidity history",
+    "position lookup",
+    "market summary",
+    "health and metrics"
+  ],
+  "frontend": [
+    "cursor_stale restarts from the newest page",
+    "indexer outage does not enter the gameplay transaction path",
+    "minor-unit strings are formatted without Number conversion"
+  ]
+}
