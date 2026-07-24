@@ -27,6 +27,16 @@ export function userPositionsPda(
   )[0];
 }
 
+export function userLiquidityPda(
+  programId: PublicKey,
+  user: PublicKey,
+): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("user_liquidity"), user.toBuffer()],
+    programId,
+  )[0];
+}
+
 export function feeAuthorityPda(
   programId: PublicKey,
   market: PublicKey,

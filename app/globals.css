@@ -83,6 +83,16 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--ink); outli
   border-bottom: 1px solid var(--hair);
 }
 .mark { font-weight: 800; font-size: 21px; letter-spacing: -0.4px; }
+.brand-area { display: flex; align-items: center; gap: 24px; flex: 0 0 auto; }
+.route-nav { display: flex; align-items: center; gap: 18px; }
+.route-nav a {
+  color: var(--mut);
+  font-size: 13px;
+  font-weight: 650;
+  text-decoration: none;
+}
+.route-nav a:hover, .route-nav a[aria-current="page"] { color: var(--ink); }
+.route-nav a:focus-visible { outline: 2px solid var(--ink); outline-offset: 4px; border-radius: 2px; }
 .topbar-actions { display: flex; align-items: center; justify-content: flex-end; gap: 14px; min-width: 0; flex: 1; }
 .quiet-button {
   min-height: 34px;
@@ -606,6 +616,265 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--ink); outli
   font-weight: 700;
 }
 
+/* ── liquidity page ─────────────────────────────────── */
+.liquidity-layout {
+  width: min(1040px, 100%);
+  margin: 0 auto;
+  padding: 54px 24px 72px;
+}
+.liquidity-intro { max-width: 620px; }
+.liquidity-intro h1 {
+  margin: 7px 0 8px;
+  font-size: clamp(34px, 5vw, 48px);
+  line-height: 1.05;
+  letter-spacing: -1.1px;
+}
+.liquidity-intro p {
+  margin: 0;
+  max-width: 560px;
+  color: var(--mut);
+  font-size: 15px;
+}
+.liquidity-portfolio,
+.liquidity-action-card,
+.market-liquidity-card {
+  border: 1px solid var(--hair);
+  border-radius: 16px;
+  background: var(--card);
+}
+.liquidity-portfolio { margin-top: 32px; overflow: hidden; }
+.liquidity-section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 20px;
+}
+.liquidity-section-heading h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 750;
+}
+.liquidity-section-heading p {
+  margin: 2px 0 0;
+  color: var(--mut);
+  font-size: 12.5px;
+}
+.sync-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--up);
+  font-size: 11.5px;
+  font-weight: 700;
+}
+.sync-state::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.sync-state.is-syncing { color: var(--mut); }
+.liquidity-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border-top: 1px solid var(--hair);
+}
+.liquidity-metrics > div {
+  min-width: 0;
+  padding: 22px 20px;
+  border-right: 1px solid var(--hair);
+}
+.liquidity-metrics > div:last-child { border-right: 0; }
+.liquidity-metrics span,
+.liquidity-metrics small {
+  display: block;
+  color: var(--mut);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.liquidity-metrics strong {
+  display: block;
+  margin: 5px 0 2px;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: clamp(20px, 3vw, 27px);
+  font-weight: 720;
+  line-height: 1.15;
+  letter-spacing: -0.4px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.liquidity-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1.22fr) minmax(300px, 0.78fr);
+  align-items: start;
+  gap: 22px;
+  margin-top: 22px;
+}
+.liquidity-action-card { padding: 20px; }
+.liquidity-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--hair);
+  border-radius: 12px;
+  background: var(--bg);
+}
+.liquidity-tabs button {
+  min-height: 40px;
+  border-radius: 8px;
+  color: var(--mut);
+  font-size: 13.5px;
+  font-weight: 700;
+}
+.liquidity-tabs button.is-active {
+  background: var(--ink);
+  color: var(--bg);
+}
+.liquidity-action-copy { margin: 22px 0 18px; }
+.liquidity-action-copy h2 { margin: 0; font-size: 20px; letter-spacing: -0.2px; }
+.liquidity-action-copy p { margin: 4px 0 0; color: var(--mut); font-size: 13px; }
+.liquidity-amount-label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--mut);
+  font-size: 12px;
+  font-weight: 650;
+}
+.liquidity-amount {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 58px;
+  padding: 0 15px;
+  border: 1px solid var(--hair);
+  border-radius: 12px;
+  background: var(--bg);
+}
+.liquidity-amount:focus-within { border-color: var(--ink); }
+.liquidity-amount > span { color: var(--mut); font-size: 20px; font-weight: 650; }
+.liquidity-amount input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font-size: 24px;
+  font-weight: 720;
+}
+.liquidity-amount b { color: var(--mut); font-size: 12px; font-weight: 700; }
+.liquidity-presets { display: flex; gap: 8px; margin-top: 10px; }
+.liquidity-presets button {
+  min-height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--hair);
+  border-radius: 999px;
+  color: var(--mut);
+  font-size: 12.5px;
+  font-weight: 650;
+}
+.liquidity-presets button:hover:not(:disabled) { border-color: var(--mut); color: var(--ink); }
+.liquidity-quote {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 16px;
+  margin: 18px 0 0;
+  padding: 14px 0;
+  border-top: 1px solid var(--hair);
+  border-bottom: 1px solid var(--hair);
+  font-size: 12.5px;
+}
+.liquidity-quote span { color: var(--mut); }
+.liquidity-quote strong { font-weight: 700; text-align: right; }
+.liquidity-setup-note,
+.liquidity-blocked-note {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--wait-tint);
+  color: var(--wait);
+  font-size: 12.5px;
+  font-weight: 620;
+}
+.pending-withdrawal {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--wait-tint);
+}
+.pending-withdrawal div { min-width: 0; }
+.pending-withdrawal strong,
+.pending-withdrawal span { display: block; }
+.pending-withdrawal strong { color: var(--wait); font-size: 13px; }
+.pending-withdrawal span { color: var(--mut); font-size: 11.5px; }
+.pending-withdrawal button {
+  min-height: 34px;
+  padding: 0 13px;
+  border: 1px solid var(--wait);
+  border-radius: 999px;
+  color: var(--wait);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.liquidity-submit {
+  width: 100%;
+  min-height: 50px;
+  margin-top: 16px;
+  border-radius: 12px;
+  background: var(--ink);
+  color: var(--bg);
+  font-size: 15px;
+  font-weight: 720;
+}
+.liquidity-submit:hover:not(:disabled) { filter: brightness(1.06); }
+.liquidity-guard {
+  margin: 8px 0 0;
+  color: var(--mut);
+  font-size: 11.5px;
+  text-align: center;
+}
+.liquidity-status {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--up-tint);
+  color: var(--up);
+  font-size: 12.5px;
+  font-weight: 650;
+}
+.liquidity-status.error { background: var(--down-tint); color: var(--down); }
+.market-liquidity-card { overflow: hidden; }
+.market-liquidity-card dl { margin: 0; border-top: 1px solid var(--hair); }
+.market-liquidity-card dl > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 52px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--hair);
+}
+.market-liquidity-card dt { color: var(--mut); font-size: 12.5px; }
+.market-liquidity-card dd { margin: 0; font-size: 13px; font-weight: 700; text-align: right; }
+.market-state { display: inline-flex; align-items: center; gap: 7px; }
+.market-state i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.market-state.available { color: var(--up); }
+.market-state.waiting { color: var(--wait); }
+.market-liquidity-note {
+  margin: 0;
+  padding: 16px 20px 18px;
+  color: var(--mut);
+  font-size: 12px;
+}
+
 @keyframes soft-pulse { 50% { opacity: 0.25; } }
 
 /* ── desktop: full-height chart, right order rail ───── */
@@ -629,9 +898,13 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--ink); outli
 /* ── mobile refinements ─────────────────────────────── */
 @media (max-width: 999px) {
   .price-arena { height: min(46dvh, 380px); }
+  .liquidity-layout { padding-top: 40px; }
 }
 @media (max-width: 640px) {
   .topbar { padding: 10px 14px; }
+  .brand-area { gap: 14px; }
+  .route-nav { gap: 11px; }
+  .route-nav a { font-size: 12px; }
   .topbar-actions { gap: 8px; }
   .stat-block { display: none; }
   .quiet-button.help-toggle, .quiet-button.feedback-toggle { display: none; }
@@ -649,6 +922,27 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--ink); outli
   }
   .faucet-toast { top: 56px; right: 10px; }
   .mode-badge { display: none; }
+  .liquidity-layout { padding: 30px 16px 48px; }
+  .liquidity-intro h1 { font-size: 34px; }
+  .liquidity-metrics { grid-template-columns: 1fr 1fr; }
+  .liquidity-metrics > div { border-bottom: 1px solid var(--hair); }
+  .liquidity-metrics > div:nth-child(2) { border-right: 0; }
+  .liquidity-metrics > div:last-child {
+    grid-column: 1 / -1;
+    border-bottom: 0;
+  }
+  .liquidity-columns { grid-template-columns: 1fr; }
+  .pending-withdrawal { align-items: flex-start; flex-direction: column; }
+}
+@media (max-width: 410px) {
+  .mark { font-size: 19px; }
+  .brand-area { gap: 10px; }
+  .route-nav { gap: 8px; }
+  .route-nav a { font-size: 11.5px; }
+  .liquidity-metrics { grid-template-columns: 1fr; }
+  .liquidity-metrics > div,
+  .liquidity-metrics > div:nth-child(2) { border-right: 0; }
+  .liquidity-metrics > div:last-child { grid-column: auto; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -27,8 +27,23 @@ export function crankSignerPda(taskAuthority: PublicKey): PublicKey {
 const INITIALIZE_USER_POSITIONS_DISCRIMINATOR = Uint8Array.from([
   6, 119, 238, 168, 19, 38, 23, 113,
 ]);
+const INITIALIZE_USER_LIQUIDITY_DISCRIMINATOR = Uint8Array.from([
+  250, 167, 58, 109, 173, 95, 219, 138,
+]);
 const DELEGATE_USER_POSITIONS_DISCRIMINATOR = Uint8Array.from([
   147, 104, 221, 210, 31, 52, 34, 53,
+]);
+const DELEGATE_USER_LIQUIDITY_DISCRIMINATOR = Uint8Array.from([
+  213, 222, 197, 230, 173, 223, 102, 167,
+]);
+const DEPOSIT_LIQUIDITY_DISCRIMINATOR = Uint8Array.from([
+  245, 99, 59, 25, 151, 71, 233, 249,
+]);
+const REQUEST_WITHDRAWAL_DISCRIMINATOR = Uint8Array.from([
+  251, 85, 121, 205, 56, 201, 12, 177,
+]);
+const EXECUTE_WITHDRAWAL_DISCRIMINATOR = Uint8Array.from([
+  113, 121, 203, 232, 137, 139, 248, 249,
 ]);
 const OPEN_POSITION_DISCRIMINATOR = Uint8Array.from([
   135, 128, 47, 77, 15, 152, 240, 49,
@@ -57,6 +72,17 @@ function u32(value: number): Uint8Array {
 function u64(value: bigint): Uint8Array {
   const bytes = new Uint8Array(8);
   new DataView(bytes.buffer).setBigUint64(0, value, true);
+  return bytes;
+}
+
+function u128(value: bigint): Uint8Array {
+  if (value < 0n || value >= (1n << 128n)) {
+    throw new Error("value must fit in u128");
+  }
+  const bytes = new Uint8Array(16);
+  const view = new DataView(bytes.buffer);
+  view.setBigUint64(0, value & ((1n << 64n) - 1n), true);
+  view.setBigUint64(8, value >> 64n, true);
   return bytes;
 }
 
@@ -114,6 +140,139 @@ export function delegateUserPositionsInstruction(
       { pubkey: programId, isSigner: false, isWritable: false },
       { pubkey: DELEGATION_PROGRAM_ID, isSigner: false, isWritable: false },
       { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    ],
+  });
+}
+
+export function initializeUserLiquidityInstruction(
+  programId: PublicKey,
+  user: PublicKey,
+  userLiquidity: PublicKey,
+): TransactionInstruction {
+  return new TransactionInstruction({
+    programId,
+    data: Buffer.from(INITIALIZE_USER_LIQUIDITY_DISCRIMINATOR),
+    keys: [
+      { pubkey: user, isSigner: true, isWritable: true },
+      { pubkey: userLiquidity, isSigner: false, isWritable: true },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    ],
+  });
+}
+
+export function delegateUserLiquidityInstruction(
+  programId: PublicKey,
+  user: PublicKey,
+  userLiquidity: PublicKey,
+  validator: PublicKey,
+): TransactionInstruction {
+  return new TransactionInstruction({
+    programId,
+    data: Buffer.from(
+      concatBytes(DELEGATE_USER_LIQUIDITY_DISCRIMINATOR, validator.toBytes()),
+    ),
+    keys: [
+      { pubkey: user, isSigner: true, isWritable: true },
+      {
+        pubkey: delegationBufferPda(programId, userLiquidity),
+        isSigner: false,
+        isWritable: true,
+      },
+      {
+        pubkey: delegationRecordPdaFromDelegatedAccount(userLiquidity),
+        isSigner: false,
+        isWritable: true,
+      },
+      {
+        pubkey: delegationMetadataPdaFromDelegatedAccount(userLiquidity),
+        isSigner: false,
+        isWritable: true,
+      },
+      { pubkey: userLiquidity, isSigner: false, isWritable: true },
+      { pubkey: programId, isSigner: false, isWritable: false },
+      { pubkey: DELEGATION_PROGRAM_ID, isSigner: false, isWritable: false },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    ],
+  });
+}
+
+interface LiquidityAccounts {
+  user: PublicKey;
+  protocolConfig: PublicKey;
+  market: PublicKey;
+  userLiquidity: PublicKey;
+  poolTokenAccount: PublicKey;
+  userTokenAccount: PublicKey;
+  collateralMint: PublicKey;
+}
+
+export function depositLiquidityInstruction(
+  programId: PublicKey,
+  accounts: LiquidityAccounts,
+  amount: bigint,
+  minSharesOut: bigint,
+): TransactionInstruction {
+  return new TransactionInstruction({
+    programId,
+    data: Buffer.from(
+      concatBytes(
+        DEPOSIT_LIQUIDITY_DISCRIMINATOR,
+        u64(amount),
+        u128(minSharesOut),
+      ),
+    ),
+    keys: [
+      { pubkey: accounts.user, isSigner: true, isWritable: false },
+      { pubkey: accounts.protocolConfig, isSigner: false, isWritable: false },
+      { pubkey: accounts.market, isSigner: false, isWritable: true },
+      { pubkey: accounts.userLiquidity, isSigner: false, isWritable: true },
+      { pubkey: accounts.poolTokenAccount, isSigner: false, isWritable: true },
+      { pubkey: accounts.userTokenAccount, isSigner: false, isWritable: true },
+      { pubkey: accounts.collateralMint, isSigner: false, isWritable: false },
+      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+    ],
+  });
+}
+
+export function requestWithdrawalInstruction(
+  programId: PublicKey,
+  accounts: Pick<LiquidityAccounts, "user" | "market" | "userLiquidity">,
+  shares: bigint,
+  minAssetsOut: bigint,
+): TransactionInstruction {
+  return new TransactionInstruction({
+    programId,
+    data: Buffer.from(
+      concatBytes(
+        REQUEST_WITHDRAWAL_DISCRIMINATOR,
+        u128(shares),
+        u64(minAssetsOut),
+      ),
+    ),
+    keys: [
+      { pubkey: accounts.user, isSigner: true, isWritable: false },
+      { pubkey: accounts.market, isSigner: false, isWritable: true },
+      { pubkey: accounts.userLiquidity, isSigner: false, isWritable: true },
+    ],
+  });
+}
+
+export function executeWithdrawalInstruction(
+  programId: PublicKey,
+  accounts: LiquidityAccounts,
+): TransactionInstruction {
+  return new TransactionInstruction({
+    programId,
+    data: Buffer.from(EXECUTE_WITHDRAWAL_DISCRIMINATOR),
+    keys: [
+      { pubkey: accounts.user, isSigner: false, isWritable: false },
+      { pubkey: accounts.protocolConfig, isSigner: false, isWritable: false },
+      { pubkey: accounts.market, isSigner: false, isWritable: true },
+      { pubkey: accounts.userLiquidity, isSigner: false, isWritable: true },
+      { pubkey: accounts.poolTokenAccount, isSigner: false, isWritable: true },
+      { pubkey: accounts.userTokenAccount, isSigner: false, isWritable: true },
+      { pubkey: accounts.collateralMint, isSigner: false, isWritable: false },
+      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
     ],
   });
 }
@@ -212,7 +371,12 @@ export function openPositionInstruction(
 
 export const instructionDiscriminators = {
   initializeUserPositions: INITIALIZE_USER_POSITIONS_DISCRIMINATOR,
+  initializeUserLiquidity: INITIALIZE_USER_LIQUIDITY_DISCRIMINATOR,
   delegateUserPositions: DELEGATE_USER_POSITIONS_DISCRIMINATOR,
+  delegateUserLiquidity: DELEGATE_USER_LIQUIDITY_DISCRIMINATOR,
+  depositLiquidity: DEPOSIT_LIQUIDITY_DISCRIMINATOR,
+  requestWithdrawal: REQUEST_WITHDRAWAL_DISCRIMINATOR,
+  executeWithdrawal: EXECUTE_WITHDRAWAL_DISCRIMINATOR,
   openPosition: OPEN_POSITION_DISCRIMINATOR,
   claimFallbackPayout: CLAIM_FALLBACK_PAYOUT_DISCRIMINATOR,
 };

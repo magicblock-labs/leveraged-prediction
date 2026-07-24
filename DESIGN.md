@@ -211,3 +211,50 @@ no bespoke styling.
   `use-devnet-faucet`) unchanged; this is a presentation-layer revamp.
 - The prototype (`docs/lever-prototype.html`) is the visual spec; where this doc and the prototype
   disagree, update this doc deliberately rather than drifting.
+
+## 11. Liquidity page
+
+The liquidity page lives at `/liquidity`; `Trade` and `Liquidity` text links sit beside the wordmark
+in the shared navbar. The active route uses `--ink`; the inactive route uses `--mut`. Links do not
+use direction colors.
+
+The page is a centered desktop canvas (`max-width: 1040px`) and a single mobile column. Its order is:
+intro → portfolio metrics → add/remove card → market details. Use the same 20px page gutters, 16px
+card radius, `--hair` borders, and quiet typography as the trade page.
+
+### Portfolio metrics
+
+- Heading: `Your liquidity`; supporting copy explains that LP value changes with trader outcomes
+  and earned fees.
+- Three equal metric cells on desktop and a stacked/grid layout on mobile:
+  `Shares`, `Current value`, and `Deposited`.
+- Shares are the exact on-chain integer with grouping separators. Current value is the shares'
+  pro-rata claim on current pool USDC, formatted to two decimals.
+- Until an indexer supplies cost basis, Deposited renders `Coming soon` with the note
+  `Requires deposit history`. Never infer deposited principal from current share value.
+
+### Add/remove card
+
+- A two-segment neutral control switches between `Add` and `Remove`; its selected state inverts to
+  `--ink`/`--bg`. Green and red are not used for the tabs or CTA.
+- Add accepts a USDC amount and shows the estimated shares received. Remove accepts a USDC amount,
+  offers `25% / 50% / Max` presets, and shows shares burned plus expected USDC received.
+- The primary button is a full-width neutral ink CTA: `Add liquidity` or `Remove liquidity`.
+- First use may require one additional wallet signature to create and route the user's liquidity
+  tracking account. Explain this before the action; progress copy distinguishes account preparation,
+  token routing, wallet approval, and confirmation.
+- Removal presents one user action and one ER wallet signature containing both
+  `request_withdrawal` and `execute_withdrawal`. If the account already contains a pending request,
+  block a new removal and explain that recovery is required.
+- Deposits and withdrawals are disabled while the market has active risk. State this as
+  `Liquidity changes resume when all open positions settle.` Close-only mode also disables deposits.
+- Quotes state `Estimated` and use a 0.5% minimum-output guard. Refresh values after confirmation.
+
+### Market details
+
+Show `Pool liquidity`, `Your pool share`, and `Market status` as quiet rows. Market status is
+`Available` only when there are no active positions and deposits are permitted; otherwise use
+`Positions settling` or `Deposits paused`. Status color, when used, must be paired with the text.
+
+The wallet control, loading/error treatment, focus states, tabular numerals, reduced-motion support,
+and 320px minimum-width quality bar are identical to the trade page.

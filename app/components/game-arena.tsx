@@ -5,6 +5,7 @@ import { CommandDeck } from "@/app/components/command-deck";
 import { PriceArena } from "@/app/components/price-arena";
 import { YourPlays } from "@/app/components/your-plays";
 import { SessionGate } from "@/app/components/session-gate";
+import { RouteNav } from "@/app/components/route-nav";
 import { useGameSnapshot } from "@/app/hooks/use-game-snapshot";
 import { useGameWallet } from "@/app/hooks/use-game-wallet";
 import { useGameSession } from "@/app/hooks/use-game-session";
@@ -83,7 +84,10 @@ export function GameArena() {
   return (
     <main className="app-shell" data-mode={snapshot.mode}>
       <header className="topbar">
-        <div className="mark">lever</div>
+        <div className="brand-area">
+          <div className="mark">lever</div>
+          <RouteNav active="trade" />
+        </div>
         <div className="topbar-actions">
           <button
             className={`quiet-button feedback-toggle ${feedback ? "is-on" : ""}`}

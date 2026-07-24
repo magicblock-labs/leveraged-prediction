@@ -41,17 +41,28 @@ import {
   type TransactionInstruction,
 } from "@solana/web3.js";
 import type { Direction } from "@/app/lib/domain";
+import {
+  assetsForShares,
+  guardedMinimum,
+  sharesForDeposit,
+} from "@/app/lib/liquidity";
 import { readClientLiveConfig } from "@/app/lib/live/client-config";
 import {
   decodeMarket,
   decodeProtocolConfig,
+  decodeUserLiquidity,
   decodeUserPositions,
 } from "@/app/lib/live/decode";
 import {
   claimFallbackPayoutInstruction,
+  delegateUserLiquidityInstruction,
   delegateUserPositionsInstruction,
+  depositLiquidityInstruction,
+  executeWithdrawalInstruction,
+  initializeUserLiquidityInstruction,
   initializeUserPositionsInstruction,
   openPositionInstruction,
+  requestWithdrawalInstruction,
 } from "@/app/lib/live/instructions";
 import {
   createOpenIntent,
@@ -65,6 +76,7 @@ import {
   feeAuthorityPda,
   marketPda,
   protocolConfigPda,
+  userLiquidityPda,
   userPositionsPda,
 } from "@/app/lib/live/pdas";
 import {
@@ -119,6 +131,19 @@ export interface SessionProgress {
     | "depositing"
     | "approving"
     | "ready";
+  message: string;
+}
+
+export type LiquidityProgressPhase =
+  | "checking"
+  | "preparing-account"
+  | "routing-collateral"
+  | "signing"
+  | "confirming"
+  | "complete";
+
+export interface LiquidityProgress {
+  phase: LiquidityProgressPhase;
   message: string;
 }
 
@@ -220,6 +245,7 @@ interface LiveWriteContext {
   marketId: number;
   market: PublicKey;
   user: PublicKey;
+  userLiquidity: PublicKey;
   userPositions: PublicKey;
   protocolConfig: PublicKey;
   collateralMint: PublicKey;
@@ -818,6 +844,7 @@ async function sendBaseSetupAndConfirm(
   signTransaction: SignTransaction,
   instructions: TransactionInstruction[],
   additionalSigners: Signer[],
+  label = "session:base-setup",
 ): Promise<string | null> {
   if (instructions.length === 0) return null;
   const connection = context.baseConnection;
@@ -845,14 +872,14 @@ async function sendBaseSetupAndConfirm(
       undefined,
       {
         additionalSigners,
-        label: "session:base-setup",
+        label,
       },
     );
   }
 
   if (!context.sessionSetupLookupTable) {
     throw new Error(
-      `Fresh session setup is ${legacyBytes} bytes and needs NEXT_PUBLIC_SESSION_SETUP_LOOKUP_TABLE`,
+      `Base setup is ${legacyBytes} bytes and needs NEXT_PUBLIC_SESSION_SETUP_LOOKUP_TABLE`,
     );
   }
   const lookupTable = await loadSetupLookupTable(
@@ -869,11 +896,11 @@ async function sendBaseSetupAndConfirm(
   const serializedBeforeWallet = transaction.serialize();
   if (serializedBeforeWallet.length > MAX_TRANSACTION_BYTES) {
     throw new Error(
-      `Session setup remains ${serializedBeforeWallet.length} bytes with lookup table ${lookupTable.key.toBase58()}`,
+      `Base setup remains ${serializedBeforeWallet.length} bytes with lookup table ${lookupTable.key.toBase58()}`,
     );
   }
 
-  debugTransaction("session:base-setup", "prepared versioned wallet transaction", {
+  debugTransaction(label, "prepared versioned wallet transaction", {
     endpoint: safeRpcEndpoint(connection.rpcEndpoint),
     feePayer: user.toBase58(),
     wallet: user.toBase58(),
@@ -890,7 +917,7 @@ async function sendBaseSetupAndConfirm(
     minContextSlot: blockhashContext.slot,
     sigVerify: false,
   });
-  debugTransaction("session:base-setup", "simulation completed", {
+  debugTransaction(label, "simulation completed", {
     endpoint: safeRpcEndpoint(connection.rpcEndpoint),
     error: simulation.value.err,
     unitsConsumed: simulation.value.unitsConsumed,
@@ -898,17 +925,17 @@ async function sendBaseSetupAndConfirm(
   }, simulation.value.err ? "error" : "info");
   if (simulation.value.err) {
     throw new Error(
-      `Transaction simulation failed during session:base-setup: ${JSON.stringify(simulation.value.err)}. Open the browser console for runtime logs.`,
+      `Transaction simulation failed during ${label}: ${JSON.stringify(simulation.value.err)}. Open the browser console for runtime logs.`,
     );
   }
 
   const expectedMessage = transaction.message.serialize();
   const signedTransaction = await signTransaction(transaction);
   if (!(signedTransaction instanceof VersionedTransaction)) {
-    throw new Error("Wallet returned the wrong transaction type during session:base-setup");
+    throw new Error(`Wallet returned the wrong transaction type during ${label}`);
   }
   if (!sameBytes(expectedMessage, signedTransaction.message.serialize())) {
-    throw new Error("Wallet changed the versioned transaction message during session:base-setup");
+    throw new Error(`Wallet changed the versioned transaction message during ${label}`);
   }
   const requiredSigners = signedTransaction.message.staticAccountKeys.slice(
     0,
@@ -918,7 +945,7 @@ async function sendBaseSetupAndConfirm(
     const signerIndex = requiredSigners.findIndex((key) => key.equals(expectedSigner));
     if (signerIndex < 0 || !hasSignature(signedTransaction.signatures[signerIndex])) {
       throw new Error(
-        `Missing ${expectedSigner.equals(user) ? "wallet" : "session"} signature during session:base-setup`,
+        `Missing ${expectedSigner.equals(user) ? "wallet" : "additional"} signature during ${label}`,
       );
     }
   }
@@ -929,7 +956,7 @@ async function sendBaseSetupAndConfirm(
     preflightCommitment: "confirmed",
     minContextSlot: blockhashContext.slot,
   });
-  debugTransaction("session:base-setup", "transaction submitted directly to configured RPC", {
+  debugTransaction(label, "transaction submitted directly to configured RPC", {
     endpoint: safeRpcEndpoint(connection.rpcEndpoint),
     signature,
     lookupTable: lookupTable.key.toBase58(),
@@ -940,7 +967,7 @@ async function sendBaseSetupAndConfirm(
     connection,
     signature,
     latest,
-    "session:base-setup",
+    label,
     rawTransaction,
   );
 }
@@ -1174,6 +1201,7 @@ async function loadWriteContext(user: PublicKey): Promise<LiveWriteContext> {
     marketId: config.marketId,
     market,
     user,
+    userLiquidity: userLiquidityPda(config.programId, user),
     userPositions: userPositionsPda(config.programId, user),
     protocolConfig,
     collateralMint,
@@ -1724,6 +1752,370 @@ async function planCollateralBalance(
       await waitForTokenAmount(context.erConnection, ata, amount);
     },
   };
+}
+
+async function planUserLiquidity(
+  context: LiveWriteContext,
+  onProgress: (progress: LiquidityProgress) => void,
+): Promise<BaseSetupPlan> {
+  const info = await context.baseConnection.getAccountInfo(
+    context.userLiquidity,
+    "confirmed",
+  );
+  if (info?.owner.equals(DELEGATION_PROGRAM_ID)) {
+    return {
+      instructions: [],
+      finalize: () =>
+        waitForRoute(
+          context.routerEndpoint,
+          context.userLiquidity,
+          context.erEndpoint,
+        ),
+    };
+  }
+  if (info && !info.owner.equals(context.programId)) {
+    throw new Error("UserLiquidity has an unexpected base-layer owner");
+  }
+  onProgress({
+    phase: "preparing-account",
+    message: info
+      ? "Routing your liquidity account to the market…"
+      : "Creating your liquidity account…",
+  });
+  const instructions = info
+    ? [
+        delegateUserLiquidityInstruction(
+          context.programId,
+          context.user,
+          context.userLiquidity,
+          context.validator,
+        ),
+      ]
+    : [
+        initializeUserLiquidityInstruction(
+          context.programId,
+          context.user,
+          context.userLiquidity,
+        ),
+        delegateUserLiquidityInstruction(
+          context.programId,
+          context.user,
+          context.userLiquidity,
+          context.validator,
+        ),
+      ];
+  return {
+    instructions,
+    finalize: async () => {
+      await waitForRoute(
+        context.routerEndpoint,
+        context.userLiquidity,
+        context.erEndpoint,
+      );
+      const erInfo = await context.erConnection.getAccountInfo(
+        context.userLiquidity,
+        "confirmed",
+      );
+      if (!erInfo?.owner.equals(context.programId)) {
+        throw new Error("UserLiquidity did not become available on the Market ER");
+      }
+      decodeUserLiquidity(Buffer.from(erInfo.data));
+    },
+  };
+}
+
+interface LiquidityWriteState {
+  market: ReturnType<typeof decodeMarket>;
+  poolTokenAccount: PublicKey;
+  userTokenAccount: PublicKey;
+  poolBalance: bigint;
+  userShares: bigint;
+  pendingWithdrawalShares: bigint;
+}
+
+async function readLiquidityWriteState(
+  context: LiveWriteContext,
+): Promise<LiquidityWriteState> {
+  const poolTokenAccount = getAssociatedTokenAddressSync(
+    context.collateralMint,
+    context.market,
+    true,
+  );
+  const userTokenAccount = getAssociatedTokenAddressSync(
+    context.collateralMint,
+    context.user,
+  );
+  const [marketInfo, liquidityInfo, pool] = await Promise.all([
+    context.erConnection.getAccountInfo(context.market, "confirmed"),
+    context.erConnection.getAccountInfo(context.userLiquidity, "confirmed"),
+    getAccount(context.erConnection, poolTokenAccount, "confirmed"),
+  ]);
+  if (!marketInfo?.owner.equals(context.programId)) {
+    throw new Error("Market has the wrong owner on the routed ER");
+  }
+  if (!liquidityInfo?.owner.equals(context.programId)) {
+    throw new Error("UserLiquidity has the wrong owner on the routed ER");
+  }
+  if (
+    !pool.owner.equals(context.market) ||
+    !pool.mint.equals(context.collateralMint)
+  ) {
+    throw new Error("Market pool token account owner or mint mismatch");
+  }
+  const market = decodeMarket(Buffer.from(marketInfo.data));
+  if (market.marketId !== context.marketId) {
+    throw new Error("Routed Market ID mismatch");
+  }
+  const entry = decodeUserLiquidity(Buffer.from(liquidityInfo.data))
+    .find((candidate) => candidate.marketId === context.marketId);
+  return {
+    market,
+    poolTokenAccount,
+    userTokenAccount,
+    poolBalance: pool.amount,
+    userShares: entry?.shares ?? 0n,
+    pendingWithdrawalShares: entry?.pendingWithdrawalShares ?? 0n,
+  };
+}
+
+function requireLiquidityWindow(
+  market: ReturnType<typeof decodeMarket>,
+  operation: "deposit" | "withdraw",
+): void {
+  if (market.activePositions !== 0 || market.openCollateral !== 0n) {
+    throw new Error("Liquidity changes resume when all open positions settle");
+  }
+  if (operation === "deposit" && market.mode !== "open") {
+    throw new Error("Deposits are paused while the Market is close-only");
+  }
+}
+
+function liquidityInstructionAccounts(
+  context: LiveWriteContext,
+  state: LiquidityWriteState,
+) {
+  return {
+    user: context.user,
+    protocolConfig: context.protocolConfig,
+    market: context.market,
+    userLiquidity: context.userLiquidity,
+    poolTokenAccount: state.poolTokenAccount,
+    userTokenAccount: state.userTokenAccount,
+    collateralMint: context.collateralMint,
+  };
+}
+
+export async function addLiquidityFlow(
+  user: PublicKey,
+  signTransaction: SignTransaction,
+  amount: bigint,
+  onProgress: (progress: LiquidityProgress) => void,
+): Promise<string> {
+  if (amount <= 0n || amount >= (1n << 64n)) {
+    throw new Error("Enter a valid USDC amount");
+  }
+  onProgress({ phase: "checking", message: "Checking the Market and your balances…" });
+  const context = await loadWriteContext(user);
+  const initialMarketInfo = await context.erConnection.getAccountInfo(
+    context.market,
+    "confirmed",
+  );
+  if (!initialMarketInfo?.owner.equals(context.programId)) {
+    throw new Error("Market is unavailable on its routed ER");
+  }
+  requireLiquidityWindow(
+    decodeMarket(Buffer.from(initialMarketInfo.data)),
+    "deposit",
+  );
+
+  const userLiquidity = await planUserLiquidity(context, onProgress);
+  if (userLiquidity.instructions.length > 0) {
+    await sendBaseSetupAndConfirm(
+      context,
+      signTransaction,
+      userLiquidity.instructions,
+      [],
+      "liquidity:account-setup",
+    );
+  }
+  await userLiquidity.finalize();
+
+  const collateral = await planCollateralBalance(context, amount, {
+    status: (_phase, message) => {
+      onProgress({ phase: "routing-collateral", message });
+    },
+  });
+  if (collateral.instructions.length > 0) {
+    await sendBaseSetupAndConfirm(
+      context,
+      signTransaction,
+      collateral.instructions,
+      [],
+      "liquidity:route-collateral",
+    );
+  }
+  await collateral.finalize();
+
+  const state = await readLiquidityWriteState(context);
+  requireLiquidityWindow(state.market, "deposit");
+  if (state.pendingWithdrawalShares > 0n) {
+    throw new Error("Complete the pending withdrawal before adding liquidity");
+  }
+  const estimatedShares = sharesForDeposit(
+    amount,
+    state.poolBalance,
+    state.market.totalShares,
+  );
+  if (estimatedShares <= 0n) {
+    throw new Error("This amount is too small to mint a liquidity share");
+  }
+  onProgress({
+    phase: "signing",
+    message: "Approve the liquidity deposit in your wallet…",
+  });
+  const signature = await sendAndConfirm(
+    context.erConnection,
+    user,
+    signTransaction,
+    [
+      depositLiquidityInstruction(
+        context.programId,
+        liquidityInstructionAccounts(context, state),
+        amount,
+        guardedMinimum(estimatedShares),
+      ),
+    ],
+    () => {
+      onProgress({
+        phase: "confirming",
+        message: "Deposit sent. Confirming your new shares…",
+      });
+    },
+    { label: "liquidity:deposit" },
+  );
+  onProgress({ phase: "complete", message: "Liquidity added" });
+  return signature;
+}
+
+export async function removeLiquidityFlow(
+  user: PublicKey,
+  signTransaction: SignTransaction,
+  shares: bigint,
+  onProgress: (progress: LiquidityProgress) => void,
+): Promise<string> {
+  if (shares <= 0n || shares >= (1n << 128n)) {
+    throw new Error("Enter a valid amount to remove");
+  }
+  onProgress({ phase: "checking", message: "Checking your shares and the Market…" });
+  const context = await loadWriteContext(user);
+  await Promise.all([
+    waitForRoute(
+      context.routerEndpoint,
+      context.userLiquidity,
+      context.erEndpoint,
+    ),
+    waitForTokenRoute(
+      context.routerEndpoint,
+      deriveEphemeralAta(context.user, context.collateralMint)[0],
+      getAssociatedTokenAddressSync(context.collateralMint, context.user),
+      context.erEndpoint,
+    ),
+  ]);
+  const state = await readLiquidityWriteState(context);
+  requireLiquidityWindow(state.market, "withdraw");
+  if (state.pendingWithdrawalShares > 0n) {
+    throw new Error("A withdrawal is already pending");
+  }
+  if (shares > state.userShares) {
+    throw new Error("The requested withdrawal exceeds your shares");
+  }
+  const estimatedAssets = assetsForShares(
+    shares,
+    state.poolBalance,
+    state.market.totalShares,
+  );
+  if (estimatedAssets <= 0n) {
+    throw new Error("This share amount is too small to withdraw");
+  }
+  const accounts = liquidityInstructionAccounts(context, state);
+  onProgress({
+    phase: "signing",
+    message: "Approve the combined removal in your wallet…",
+  });
+  const signature = await sendAndConfirm(
+    context.erConnection,
+    user,
+    signTransaction,
+    [
+      requestWithdrawalInstruction(
+        context.programId,
+        accounts,
+        shares,
+        guardedMinimum(estimatedAssets),
+      ),
+      executeWithdrawalInstruction(context.programId, accounts),
+    ],
+    () => {
+      onProgress({
+        phase: "confirming",
+        message: "Removal sent. Confirming your USDC balance…",
+      });
+    },
+    { label: "liquidity:remove" },
+  );
+  onProgress({ phase: "complete", message: "Liquidity removed" });
+  return signature;
+}
+
+export async function completePendingLiquidityWithdrawalFlow(
+  user: PublicKey,
+  signTransaction: SignTransaction,
+  onProgress: (progress: LiquidityProgress) => void,
+): Promise<string> {
+  onProgress({ phase: "checking", message: "Checking the pending withdrawal…" });
+  const context = await loadWriteContext(user);
+  await Promise.all([
+    waitForRoute(
+      context.routerEndpoint,
+      context.userLiquidity,
+      context.erEndpoint,
+    ),
+    waitForTokenRoute(
+      context.routerEndpoint,
+      deriveEphemeralAta(context.user, context.collateralMint)[0],
+      getAssociatedTokenAddressSync(context.collateralMint, context.user),
+      context.erEndpoint,
+    ),
+  ]);
+  const state = await readLiquidityWriteState(context);
+  requireLiquidityWindow(state.market, "withdraw");
+  if (state.pendingWithdrawalShares <= 0n) {
+    throw new Error("There is no pending withdrawal to complete");
+  }
+  onProgress({
+    phase: "signing",
+    message: "Approve completion of the pending withdrawal…",
+  });
+  const signature = await sendAndConfirm(
+    context.erConnection,
+    user,
+    signTransaction,
+    [
+      executeWithdrawalInstruction(
+        context.programId,
+        liquidityInstructionAccounts(context, state),
+      ),
+    ],
+    () => {
+      onProgress({
+        phase: "confirming",
+        message: "Withdrawal sent. Confirming your USDC balance…",
+      });
+    },
+    { label: "liquidity:complete-pending" },
+  );
+  onProgress({ phase: "complete", message: "Pending withdrawal completed" });
+  return signature;
 }
 
 async function positionMatchesIntent(

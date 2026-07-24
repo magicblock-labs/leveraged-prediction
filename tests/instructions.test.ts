@@ -3,9 +3,14 @@ import { PublicKey } from "@solana/web3.js";
 import {
   claimFallbackPayoutInstruction,
   crankSignerPda,
+  delegateUserLiquidityInstruction,
   delegateUserPositionsInstruction,
+  depositLiquidityInstruction,
+  executeWithdrawalInstruction,
+  initializeUserLiquidityInstruction,
   instructionDiscriminators,
   openPositionInstruction,
+  requestWithdrawalInstruction,
 } from "@/app/lib/live/instructions";
 
 const PROGRAM_ID = new PublicKey("AcvFWjSFrLAAWMynqQmBxeBe8wHRTVhhHtB6byatQLFr");
@@ -13,8 +18,76 @@ const PROGRAM_ID = new PublicKey("AcvFWjSFrLAAWMynqQmBxeBe8wHRTVhhHtB6byatQLFr")
 describe("final ABI write builders", () => {
   it("locks the generated instruction discriminators", () => {
     expect([...instructionDiscriminators.initializeUserPositions]).toEqual([6, 119, 238, 168, 19, 38, 23, 113]);
+    expect([...instructionDiscriminators.initializeUserLiquidity]).toEqual([250, 167, 58, 109, 173, 95, 219, 138]);
     expect([...instructionDiscriminators.delegateUserPositions]).toEqual([147, 104, 221, 210, 31, 52, 34, 53]);
+    expect([...instructionDiscriminators.delegateUserLiquidity]).toEqual([213, 222, 197, 230, 173, 223, 102, 167]);
+    expect([...instructionDiscriminators.depositLiquidity]).toEqual([245, 99, 59, 25, 151, 71, 233, 249]);
+    expect([...instructionDiscriminators.requestWithdrawal]).toEqual([251, 85, 121, 205, 56, 201, 12, 177]);
+    expect([...instructionDiscriminators.executeWithdrawal]).toEqual([113, 121, 203, 232, 137, 139, 248, 249]);
     expect([...instructionDiscriminators.openPosition]).toEqual([135, 128, 47, 77, 15, 152, 240, 49]);
+  });
+
+  it("builds liquidity account setup against the canonical PDA", () => {
+    const user = new PublicKey("11111111111111111111111111111112");
+    const liquidity = new PublicKey("11111111111111111111111111111113");
+    const validator = new PublicKey("11111111111111111111111111111114");
+    const initialize = initializeUserLiquidityInstruction(PROGRAM_ID, user, liquidity);
+    const delegate = delegateUserLiquidityInstruction(
+      PROGRAM_ID,
+      user,
+      liquidity,
+      validator,
+    );
+
+    expect(initialize.keys).toHaveLength(3);
+    expect(initialize.keys[0]).toMatchObject({ isSigner: true, isWritable: true });
+    expect(initialize.data).toEqual(Buffer.from(instructionDiscriminators.initializeUserLiquidity));
+    expect(delegate.keys).toHaveLength(8);
+    expect(delegate.keys[4].pubkey.equals(liquidity)).toBe(true);
+    expect(delegate.data.subarray(8)).toEqual(validator.toBuffer());
+  });
+
+  it("encodes deposit and bundled withdrawal instructions", () => {
+    const keys = Array.from(
+      { length: 7 },
+      (_, index) =>
+        new PublicKey(Uint8Array.from({ length: 32 }, () => index + 1)),
+    );
+    const accounts = {
+      user: keys[0],
+      protocolConfig: keys[1],
+      market: keys[2],
+      userLiquidity: keys[3],
+      poolTokenAccount: keys[4],
+      userTokenAccount: keys[5],
+      collateralMint: keys[6],
+    };
+    const shares = (1n << 80n) + 17n;
+    const deposit = depositLiquidityInstruction(
+      PROGRAM_ID,
+      accounts,
+      25_000_000n,
+      shares,
+    );
+    const request = requestWithdrawalInstruction(
+      PROGRAM_ID,
+      accounts,
+      shares,
+      24_875_000n,
+    );
+    const execute = executeWithdrawalInstruction(PROGRAM_ID, accounts);
+
+    expect(deposit.keys).toHaveLength(8);
+    expect(deposit.data.readBigUInt64LE(8)).toBe(25_000_000n);
+    expect(deposit.data.readBigUInt64LE(16)).toBe(17n);
+    expect(deposit.data.readBigUInt64LE(24)).toBe(1n << 16n);
+    expect(request.keys).toHaveLength(3);
+    expect(request.keys[0]).toMatchObject({ isSigner: true, isWritable: false });
+    expect(request.data.readBigUInt64LE(8)).toBe(17n);
+    expect(request.data.readBigUInt64LE(16)).toBe(1n << 16n);
+    expect(request.data.readBigUInt64LE(24)).toBe(24_875_000n);
+    expect(execute.keys).toHaveLength(8);
+    expect(execute.keys[0]).toMatchObject({ isSigner: false, isWritable: false });
   });
 
   it("pins UserPositions delegation to the Market validator", () => {
