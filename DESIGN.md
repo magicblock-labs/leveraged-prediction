@@ -170,7 +170,11 @@ Section h2 `POSITIONS` with a `n/8` capacity counter. Rows, nearest expiry first
 Wallet pill opens the wallet adapter modal when disconnected; connected state shows the dot +
 compact address. Buying power reflects the session balance and updates on open/settle.
 Session-gate and faucet flows adopt this same visual language (cards, hairlines, ink CTAs) —
-no bespoke styling.
+no bespoke styling. An inactive session never obscures the market by itself. The setup dialog opens
+only after the user expresses intent by pressing `Play up`, `Play down`, or the inactive session
+control in the navbar; dismissing it returns to the fully visible market. The navbar always pairs
+session state with text (`Session active` or `Session inactive`) rather than color alone. The inactive
+state is actionable and routes to Trade before opening setup when selected from another primary page.
 
 ## 7. Motion
 
@@ -179,7 +183,8 @@ no bespoke styling.
 - State changes (notices, rows appearing): instant swap; no slides, fades, or confetti.
 - Allowed micro-interaction: CTA hover `filter: brightness(1.06)`; live-dot pulse ≤1.4s opacity
   blink. Both disabled under `prefers-reduced-motion`.
-- Haptics (mobile): a short vibration on open and settle is fine; nothing longer than 60ms.
+- Direction buttons do not trigger haptics. Their press, session prompt, and transaction status are
+  communicated visually and through accessible status text.
 
 ## 8. Copy voice
 
@@ -258,3 +263,29 @@ Show `Pool liquidity`, `Your pool share`, and `Market status` as quiet rows. Mar
 
 The wallet control, loading/error treatment, focus states, tabular numerals, reduced-motion support,
 and 320px minimum-width quality bar are identical to the trade page.
+
+## 12. Brand mark and favicon
+
+The wordmark remains lowercase `lever`, but it is paired with a compact neutral icon: a diagonal
+lever bar resting on a triangular fulcrum inside a rounded square. The mark is monochrome and never
+uses direction colors. The same geometry supplies the browser favicon so the navbar and tab remain
+visually connected. At narrow widths the wordmark may hide while the icon remains.
+
+## 13. Leaderboard page
+
+The leaderboard lives at `/leaderboard` and is the third primary route beside `Trade` and
+`Liquidity`. It follows the liquidity page’s centered `1040px` canvas, navbar, card borders, and
+mobile single-column behavior.
+
+The top section contains the page title and a prominent `Total volume` metric. Below it, a
+connected-wallet summary shows the user’s volume, trade count, wins, and losses. The rankings table
+uses the columns `Rank`, `Trader`, `Volume`, `Trades`, `Wins`, and `Losses`, ordered by settled
+performance (net P&L first, with volume as the first tie-breaker) as reported by the indexer.
+
+All leaderboard values are historical facts and therefore come from the indexer rather than current
+account state. `Total volume` is the sum of indexed all-time volume across every fetched leaderboard
+page; if the complete result cannot be established, show it as unavailable instead of presenting a
+partial total. Until that datasource is connected, render em dashes and an explicit `Indexer
+connection pending` state; never synthesize rankings from open positions or fixture data. Wallet
+addresses use the standard compact form, and win/loss labels may use semantic green/red only when
+real values exist.

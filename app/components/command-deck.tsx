@@ -27,7 +27,14 @@ export function CommandDeck({ snapshot, occupiedPositions, busy = false, session
   const walletConnected = snapshot.walletAddress !== null;
   const hasBalance = snapshot.walletBalanceUsd !== null && snapshot.walletBalanceUsd >= amount;
   const hasSessionAllowance = sessionReady && sessionAllowanceUsd !== null && sessionAllowanceUsd >= amount;
-  const blocked = busy || needsRecovery || !walletConnected || !hasSessionAllowance || !submissionReady || !hasBalance || snapshot.marketMode !== "open" || capacityReached || marketCapacityReached;
+  const marketBlocked = busy ||
+    needsRecovery ||
+    snapshot.marketMode !== "open" ||
+    capacityReached ||
+    marketCapacityReached;
+  const activeSessionBlocked = sessionReady &&
+    (!walletConnected || !hasSessionAllowance || !submissionReady || !hasBalance);
+  const blocked = marketBlocked || activeSessionBlocked;
   const fundingMessage = walletConnected && !hasBalance
     ? snapshot.walletBalanceUsd === null
       ? "USDC account setup is not ready"
@@ -35,10 +42,20 @@ export function CommandDeck({ snapshot, occupiedPositions, busy = false, session
     : sessionReady && !hasSessionAllowance
       ? `Session has $${(sessionAllowanceUsd ?? 0).toFixed(2)} left · choose a smaller play`
     : null;
+  const sessionMessage = !sessionReady
+    ? walletConnected
+      ? "Choose Up or Down to start a one-hour session"
+      : "Choose Up or Down to connect and start a session"
+    : null;
   const visibleStatusMessage = statusMessage?.startsWith("Playing ") ||
     statusMessage?.startsWith("Play sent")
     ? null
     : statusMessage;
+  const actionMessage = needsRecovery
+    ? visibleStatusMessage
+    : snapshot.marketMode !== "open"
+      ? "Trading is paused while existing positions settle"
+      : fundingMessage ?? sessionMessage ?? visibleStatusMessage;
 
   return (
     <section className="ticket" aria-label="Play controls">
@@ -105,9 +122,9 @@ export function CommandDeck({ snapshot, occupiedPositions, busy = false, session
 
       {capacityReached ? <p className="write-lock">{snapshot.maxPositions}/{snapshot.maxPositions} play slots filled · wait for a result</p> : null}
       {!capacityReached && marketCapacityReached ? <p className="write-lock">Market full · {snapshot.maxPositions} active positions</p> : null}
-      {!capacityReached && !marketCapacityReached && (fundingMessage || visibleStatusMessage) ? (
+      {!capacityReached && !marketCapacityReached && actionMessage ? (
         <div className="write-lock" role="status">
-          <span>{fundingMessage ?? visibleStatusMessage}</span>
+          <span>{actionMessage}</span>
           {needsRecovery && onRecover ? <button onClick={onRecover} type="button">Check status</button> : null}
         </div>
       ) : null}

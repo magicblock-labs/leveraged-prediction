@@ -15,6 +15,7 @@ interface SessionGateProps {
   faucetBusy: boolean;
   onStart(amountUsd: number): void;
   onFund(): void;
+  onDismiss(): void;
 }
 
 export function SessionGate({
@@ -29,14 +30,36 @@ export function SessionGate({
   faucetBusy,
   onStart,
   onFund,
+  onDismiss,
 }: SessionGateProps) {
   const inputId = useId();
   const [allowance, setAllowance] = useState(defaultAllowanceUsd);
   if (!visible) return null;
 
   return (
-    <div className="session-backdrop">
-      <section className="session-dialog" role="dialog" aria-modal="true" aria-labelledby="session-title">
+    <div
+      className="session-backdrop"
+      role="presentation"
+      onMouseDown={() => {
+        if (!busy) onDismiss();
+      }}
+    >
+      <section
+        className="session-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="session-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <button
+          className="dialog-close"
+          onClick={onDismiss}
+          disabled={busy}
+          type="button"
+          aria-label="Close session setup"
+        >
+          ×
+        </button>
         <span className="eyebrow">One-time play setup</span>
         <h2 id="session-title">
           {hasStoredSession ? "Finish your play session" : "Start your play session"}

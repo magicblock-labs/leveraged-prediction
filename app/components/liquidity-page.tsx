@@ -1,7 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { BrandMark } from "@/app/components/brand-mark";
 import { RouteNav } from "@/app/components/route-nav";
+import { SessionIndicator } from "@/app/components/session-indicator";
+import { useGameSession } from "@/app/hooks/use-game-session";
 import { useGameWallet } from "@/app/hooks/use-game-wallet";
 import { useLiquiditySnapshot } from "@/app/hooks/use-liquidity-snapshot";
 import { useLiquidityTransaction } from "@/app/hooks/use-liquidity-transaction";
@@ -38,6 +41,7 @@ function ownershipPercent(shares: bigint, totalShares: bigint): string {
 
 export function LiquidityPage() {
   const wallet = useGameWallet();
+  const session = useGameSession();
   const { snapshot, error, refreshing, refresh } =
     useLiquiditySnapshot(wallet.address);
   const transaction = useLiquidityTransaction(refresh);
@@ -160,10 +164,15 @@ export function LiquidityPage() {
     <main className="app-shell liquidity-shell">
       <header className="topbar">
         <div className="brand-area">
-          <div className="mark">lever</div>
+          <BrandMark />
           <RouteNav active="liquidity" />
         </div>
         <div className="topbar-actions">
+          <SessionIndicator
+            active={session.ready}
+            checking={session.busy && !session.ready}
+            onRequestSetup={() => window.location.assign("/?session=setup")}
+          />
           <div className="stat-block">
             <span>Wallet balance</span>
             <strong className="num">
@@ -179,7 +188,7 @@ export function LiquidityPage() {
             type="button"
           >
             <span className={`dot ${wallet.address ? "is-connected" : ""}`} />
-            {walletLabel}
+            <span className="wallet-label">{walletLabel}</span>
           </button>
         </div>
       </header>

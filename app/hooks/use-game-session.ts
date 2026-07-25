@@ -128,8 +128,10 @@ export function useGameSession() {
       const validated = await validateGameSession(wallet.publicKey, created);
       setRemainingAllowanceUsd(Number(validated.remainingAllowanceMinor) / 1_000_000);
       window.setTimeout(() => setProgress(null), 1_500);
+      return true;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Session setup failed");
+      return false;
     } finally {
       setSettingUp(false);
     }
