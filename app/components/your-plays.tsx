@@ -6,7 +6,7 @@ import { playStatusAt } from "@/app/lib/domain";
 interface YourPlaysProps {
   plays: Play[];
   now: number;
-  capacity: number;
+  celebratingIds?: ReadonlySet<string>;
   fallbackClaimableUsd?: number;
   claimBusy?: boolean;
   onClaimFallback?(): void;
@@ -19,6 +19,7 @@ const STATUS_LABELS: Record<PlayStatus, string> = {
   refunding: "Refunding",
   won: "Won",
   lost: "Lost",
+  breakeven: "Draw",
   refunded: "Refunded",
 };
 
@@ -29,12 +30,11 @@ function contextLine(play: Play, status: PlayStatus, now: number): string {
   return entry;
 }
 
-export function YourPlays({ plays, now, capacity, fallbackClaimableUsd = 0, claimBusy = false, onClaimFallback }: YourPlaysProps) {
+export function YourPlays({ plays, now, celebratingIds, fallbackClaimableUsd = 0, claimBusy = false, onClaimFallback }: YourPlaysProps) {
   return (
     <section className="positions" aria-label="Your positions">
       <header className="positions-header">
         <h2>Positions</h2>
-        <span className="cap num">{Math.min(plays.length, capacity)}/{capacity}</span>
       </header>
 
       {fallbackClaimableUsd > 0 ? (
@@ -55,10 +55,13 @@ export function YourPlays({ plays, now, capacity, fallbackClaimableUsd = 0, clai
         ) : (
           plays.map((play) => {
             const status = playStatusAt(play, now);
-            const finished = status === "won" || status === "lost" || status === "refunded";
+            const finished = status === "won" || status === "lost" || status === "breakeven" || status === "refunded";
             const progress = Math.max(0, Math.min(1, (now - play.openedAt) / (play.expiresAt - play.openedAt)));
             return (
-              <article className={`play-row ${play.direction} ${status}`} key={play.id}>
+              <article
+                className={`play-row ${play.direction} ${status}${celebratingIds?.has(play.id) ? " is-celebrating" : ""}`}
+                key={play.id}
+              >
                 <div className="chip" aria-hidden="true">{play.direction === "up" ? "▲" : "▼"}</div>
                 <div className="what">
                   <strong>{play.direction === "up" ? "Up" : "Down"} · <span className="num">${play.collateralUsd.toFixed(2)}</span> stake</strong>

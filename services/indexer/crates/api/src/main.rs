@@ -2,7 +2,9 @@ use std::{env, net::SocketAddr, str::FromStr, time::Duration};
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use leveraged_prediction_api::{contract_test, openapi, router, ApiState};
+use leveraged_prediction_api::{
+    contract_test, listen_for_position_changes, openapi, router, ApiState,
+};
 use leveraged_prediction_storage::Storage;
 use solana_pubkey::Pubkey;
 use tower::limit::ConcurrencyLimitLayer;
@@ -92,12 +94,14 @@ async fn main() -> Result<()> {
             "bind": local_addr,
         })
     );
+    let position_listener = tokio::spawn(listen_for_position_changes(database_url, state.clone()));
     let app = router(state)
         .layer(ConcurrencyLimitLayer::new(cli.max_concurrent_requests))
         .layer(cors_layer()?);
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown())
         .await?;
+    position_listener.abort();
     Ok(())
 }
 

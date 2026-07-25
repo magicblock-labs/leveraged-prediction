@@ -24,6 +24,9 @@ struct Inner {
     latency_micros: AtomicU64,
     query_timeouts: AtomicU64,
     stale_responses: AtomicU64,
+    position_sockets: AtomicUsize,
+    position_messages: AtomicU64,
+    position_resyncs: AtomicU64,
 }
 
 pub struct Snapshot {
@@ -33,6 +36,9 @@ pub struct Snapshot {
     pub latency_micros: u64,
     pub query_timeouts: u64,
     pub stale_responses: u64,
+    pub position_sockets: usize,
+    pub position_messages: u64,
+    pub position_resyncs: u64,
 }
 
 impl ApiMetrics {
@@ -44,6 +50,9 @@ impl ApiMetrics {
             latency_micros: self.inner.latency_micros.load(Ordering::Relaxed),
             query_timeouts: self.inner.query_timeouts.load(Ordering::Relaxed),
             stale_responses: self.inner.stale_responses.load(Ordering::Relaxed),
+            position_sockets: self.inner.position_sockets.load(Ordering::Relaxed),
+            position_messages: self.inner.position_messages.load(Ordering::Relaxed),
+            position_resyncs: self.inner.position_resyncs.load(Ordering::Relaxed),
         }
     }
 
@@ -53,6 +62,22 @@ impl ApiMetrics {
 
     pub fn record_stale_response(&self) {
         self.inner.stale_responses.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn position_socket_opened(&self) {
+        self.inner.position_sockets.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn position_socket_closed(&self) {
+        self.inner.position_sockets.fetch_sub(1, Ordering::Relaxed);
+    }
+
+    pub fn position_message_sent(&self) {
+        self.inner.position_messages.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn position_resync(&self) {
+        self.inner.position_resyncs.fetch_add(1, Ordering::Relaxed);
     }
 }
 

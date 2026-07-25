@@ -9,7 +9,10 @@ use std::{future::Future, str::FromStr, time::Duration};
 use anyhow::Context;
 use axum::{
     body::{to_bytes, Body},
-    extract::{Path, Query, State},
+    extract::{
+        ws::{Message, WebSocket},
+        Path, Query, State, WebSocketUpgrade,
+    },
     http::{header, StatusCode},
     middleware,
     response::{IntoResponse, Response},
@@ -26,10 +29,14 @@ use models::{
 };
 use serde::{Deserialize, Serialize};
 use solana_pubkey::Pubkey;
+use sqlx::postgres::PgListener;
+use tokio::sync::broadcast;
 use tower::ServiceExt;
 
 const DEFAULT_LIMIT: u16 = 20;
 const MAX_LIMIT: u16 = 100;
+const POSITION_CHANNEL: &str = "leveraged_prediction_positions";
+const POSITION_BROADCAST_CAPACITY: usize = 1_024;
 
 #[derive(Clone)]
 pub struct ApiState {
@@ -39,6 +46,7 @@ pub struct ApiState {
     query_timeout: Duration,
     max_staleness: Duration,
     metrics: metrics::ApiMetrics,
+    position_changes: broadcast::Sender<PositionChange>,
 }
 
 impl ApiState {
@@ -49,6 +57,7 @@ impl ApiState {
         query_timeout: Duration,
         max_staleness: Duration,
     ) -> Self {
+        let (position_changes, _) = broadcast::channel(POSITION_BROADCAST_CAPACITY);
         Self {
             storage,
             network,
@@ -56,6 +65,7 @@ impl ApiState {
             query_timeout,
             max_staleness,
             metrics: metrics::ApiMetrics::default(),
+            position_changes,
         }
     }
 }
@@ -65,6 +75,10 @@ pub fn router(state: ApiState) -> Router {
         .route("/v1/leaderboards", get(leaderboards))
         .route("/v1/users/{wallet}/stats", get(user_stats))
         .route("/v1/users/{wallet}/positions", get(user_positions))
+        .route(
+            "/v1/users/{wallet}/positions/stream",
+            get(user_positions_stream),
+        )
         .route("/v1/users/{wallet}/liquidity", get(user_liquidity))
         .route("/v1/positions/{market_id}/{position_id}", get(position))
         .route("/v1/markets/{market_id}/summary", get(market_summary))
@@ -239,6 +253,27 @@ struct PositionsQuery {
     status: Option<String>,
     limit: Option<u16>,
     cursor: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PositionStreamQuery {
+    market_id: Option<u16>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+struct PositionChange {
+    network: String,
+    program_id: String,
+    user: String,
+    market_id: i32,
+    position_id: i64,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum PositionStreamEvent {
+    Snapshot { positions: Vec<PositionItem> },
+    Upsert { position: PositionItem },
 }
 
 #[derive(Debug, Deserialize)]
@@ -551,6 +586,265 @@ async fn user_positions(
     }))
 }
 
+async fn user_positions_stream(
+    websocket: WebSocketUpgrade,
+    State(state): State<ApiState>,
+    Path(wallet): Path<String>,
+    Query(query): Query<PositionStreamQuery>,
+) -> Result<Response, ApiError> {
+    validate_wallet(&wallet)?;
+    Ok(websocket
+        .on_upgrade(move |socket| serve_position_stream(socket, state, wallet, query.market_id)))
+}
+
+async fn serve_position_stream(
+    mut socket: WebSocket,
+    state: ApiState,
+    wallet: String,
+    market_id: Option<u16>,
+) {
+    let mut changes = state.position_changes.subscribe();
+    if send_position_snapshot(&mut socket, &state, &wallet, market_id)
+        .await
+        .is_err()
+    {
+        return;
+    }
+
+    state.metrics.position_socket_opened();
+    loop {
+        tokio::select! {
+            inbound = socket.recv() => {
+                match inbound {
+                    Some(Ok(Message::Ping(payload))) => {
+                        if socket.send(Message::Pong(payload)).await.is_err() {
+                            break;
+                        }
+                    }
+                    Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
+                    _ => {}
+                }
+            }
+            changed = changes.recv() => {
+                match changed {
+                    Ok(change) if position_change_matches(
+                        &change,
+                        &state.network,
+                        &state.program_id,
+                        &wallet,
+                        market_id,
+                    ) => {
+                        match position_by_identity(&state, change.market_id, change.position_id).await {
+                            Ok(Some(position)) => {
+                                if send_position_event(
+                                    &mut socket,
+                                    &PositionStreamEvent::Upsert { position },
+                                ).await.is_err() {
+                                    break;
+                                }
+                                state.metrics.position_message_sent();
+                            }
+                            Ok(None) => {}
+                            Err(_) => {
+                                if send_position_snapshot(&mut socket, &state, &wallet, market_id)
+                                    .await
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        state.metrics.position_resync();
+                        if send_position_snapshot(&mut socket, &state, &wallet, market_id)
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        }
+    }
+    state.metrics.position_socket_closed();
+}
+
+async fn send_position_snapshot(
+    socket: &mut WebSocket,
+    state: &ApiState,
+    wallet: &str,
+    market_id: Option<u16>,
+) -> Result<(), ()> {
+    let positions = positions_for_stream(state, wallet, market_id)
+        .await
+        .map_err(|_| ())?;
+    send_position_event(socket, &PositionStreamEvent::Snapshot { positions }).await?;
+    state.metrics.position_message_sent();
+    Ok(())
+}
+
+async fn send_position_event(
+    socket: &mut WebSocket,
+    event: &PositionStreamEvent,
+) -> Result<(), ()> {
+    let body = serde_json::to_string(event).map_err(|_| ())?;
+    socket
+        .send(Message::Text(body.into()))
+        .await
+        .map_err(|_| ())
+}
+
+fn position_change_matches(
+    change: &PositionChange,
+    network: &str,
+    program_id: &str,
+    wallet: &str,
+    market_id: Option<u16>,
+) -> bool {
+    change.network == network
+        && change.program_id == program_id
+        && change.user == wallet
+        && market_id.is_none_or(|value| i32::from(value) == change.market_id)
+}
+
+async fn positions_for_stream(
+    state: &ApiState,
+    wallet: &str,
+    market_id: Option<u16>,
+) -> Result<Vec<PositionItem>, ApiError> {
+    timed(state, async {
+        sqlx::query_as::<_, PositionItem>(
+            r#"
+            SELECT
+                market_id,
+                position_id,
+                user_pubkey AS user,
+                direction,
+                entry_price::text,
+                collateral::text,
+                expires_at,
+                lifecycle_status,
+                checkpoint_status,
+                outcome,
+                payout_amount::text,
+                lp_fee_amount::text,
+                platform_fee_amount::text,
+                total_fee_amount::text,
+                net_pnl::text,
+                opened_at,
+                closed_at,
+                COALESCE(closed_at, opened_at, expires_at, to_timestamp(0)) AS sort_time
+            FROM api.position_history
+            WHERE network = $1
+              AND program_id = $2
+              AND user_pubkey = $3
+              AND ($4::INTEGER IS NULL OR market_id = $4)
+            ORDER BY sort_time DESC, market_id DESC, position_id DESC
+            "#,
+        )
+        .bind(&state.network)
+        .bind(&state.program_id)
+        .bind(wallet)
+        .bind(market_id.map(i32::from))
+        .fetch_all(state.storage.pool())
+        .await
+    })
+    .await
+}
+
+async fn position_by_identity(
+    state: &ApiState,
+    market_id: i32,
+    position_id: i64,
+) -> Result<Option<PositionItem>, ApiError> {
+    timed(state, async {
+        sqlx::query_as::<_, PositionItem>(
+            r#"
+            SELECT
+                market_id,
+                position_id,
+                user_pubkey AS user,
+                direction,
+                entry_price::text,
+                collateral::text,
+                expires_at,
+                lifecycle_status,
+                checkpoint_status,
+                outcome,
+                payout_amount::text,
+                lp_fee_amount::text,
+                platform_fee_amount::text,
+                total_fee_amount::text,
+                net_pnl::text,
+                opened_at,
+                closed_at,
+                COALESCE(closed_at, opened_at, expires_at, to_timestamp(0)) AS sort_time
+            FROM api.position_history
+            WHERE network = $1 AND program_id = $2 AND market_id = $3 AND position_id = $4
+            "#,
+        )
+        .bind(&state.network)
+        .bind(&state.program_id)
+        .bind(market_id)
+        .bind(position_id)
+        .fetch_optional(state.storage.pool())
+        .await
+    })
+    .await
+}
+
+pub async fn listen_for_position_changes(database_url: String, state: ApiState) {
+    let mut retry_delay = Duration::from_millis(250);
+    loop {
+        let result = async {
+            let mut listener = PgListener::connect(&database_url).await?;
+            listener.listen(POSITION_CHANNEL).await?;
+            retry_delay = Duration::from_millis(250);
+            loop {
+                let notification = listener.recv().await?;
+                match serde_json::from_str::<PositionChange>(notification.payload()) {
+                    Ok(change) => {
+                        let _ = state.position_changes.send(change);
+                    }
+                    Err(error) => {
+                        eprintln!(
+                            "{}",
+                            serde_json::json!({
+                                "timestamp": Utc::now(),
+                                "level": "warning",
+                                "service": "leveraged-prediction-api",
+                                "event": "position_notification_rejected",
+                                "error": error.to_string(),
+                            })
+                        );
+                    }
+                }
+            }
+            #[allow(unreachable_code)]
+            Ok::<(), sqlx::Error>(())
+        }
+        .await;
+        let _ = result;
+        eprintln!(
+            "{}",
+            serde_json::json!({
+                "timestamp": Utc::now(),
+                "level": "warning",
+                "service": "leveraged-prediction-api",
+                "event": "position_listener_reconnecting",
+                "delay_ms": retry_delay.as_millis(),
+                "reason": "database_listener_unavailable",
+            })
+        );
+        tokio::time::sleep(retry_delay).await;
+        retry_delay = (retry_delay * 2).min(Duration::from_secs(10));
+    }
+}
+
 async fn user_liquidity(
     State(state): State<ApiState>,
     Path(wallet): Path<String>,
@@ -794,6 +1088,12 @@ async fn prometheus_metrics(State(state): State<ApiState>) -> Result<Response, A
          leveraged_prediction_api_query_timeouts_total {}\n\
          # TYPE leveraged_prediction_api_stale_responses_total counter\n\
          leveraged_prediction_api_stale_responses_total {}\n\
+         # TYPE leveraged_prediction_api_position_sockets gauge\n\
+         leveraged_prediction_api_position_sockets {}\n\
+         # TYPE leveraged_prediction_api_position_messages_total counter\n\
+         leveraged_prediction_api_position_messages_total {}\n\
+         # TYPE leveraged_prediction_api_position_resyncs_total counter\n\
+         leveraged_prediction_api_position_resyncs_total {}\n\
          # TYPE leveraged_prediction_api_pool_connections gauge\n\
          leveraged_prediction_api_pool_connections {}\n\
          # TYPE leveraged_prediction_api_pool_idle gauge\n\
@@ -806,6 +1106,9 @@ async fn prometheus_metrics(State(state): State<ApiState>) -> Result<Response, A
         metrics.latency_micros,
         metrics.query_timeouts,
         metrics.stale_responses,
+        metrics.position_sockets,
+        metrics.position_messages,
+        metrics.position_resyncs,
         pool_size,
         pool_idle,
     );
@@ -923,5 +1226,40 @@ mod tests {
         let encoded = cursor::encode(&cursor).unwrap();
         let decoded = cursor::decode::<LeaderboardCursor>(&encoded).unwrap();
         assert_ne!(decoded.refresh_version, 5);
+    }
+
+    #[test]
+    fn position_notifications_are_scoped_by_chain_user_and_market() {
+        let change: PositionChange = serde_json::from_str(
+            r#"{
+                "network":"devnet",
+                "program_id":"program",
+                "user":"wallet",
+                "market_id":7,
+                "position_id":42
+            }"#,
+        )
+        .unwrap();
+        assert!(position_change_matches(
+            &change,
+            "devnet",
+            "program",
+            "wallet",
+            Some(7),
+        ));
+        assert!(!position_change_matches(
+            &change,
+            "devnet",
+            "program",
+            "other-wallet",
+            Some(7),
+        ));
+        assert!(!position_change_matches(
+            &change,
+            "devnet",
+            "program",
+            "wallet",
+            Some(8),
+        ));
     }
 }

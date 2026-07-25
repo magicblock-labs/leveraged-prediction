@@ -4,6 +4,7 @@ use anyhow::{ensure, Context, Result};
 use leveraged_prediction_storage::Storage;
 use serde::Serialize;
 use solana_pubkey::Pubkey;
+use sqlx::postgres::PgListener;
 
 use crate::projections::leaderboards::{self, RefreshReport};
 
@@ -42,6 +43,7 @@ pub struct LeaderboardFixtureReport {
     tie_order: Vec<String>,
     api_role_select_allowed: bool,
     api_role_forbidden_actions: usize,
+    position_notification: bool,
     sample: Vec<FixtureRow>,
 }
 
@@ -52,7 +54,21 @@ pub async fn run(database_url: &str) -> Result<LeaderboardFixtureReport> {
         .ensure_source(NETWORK, "er", "http://api-fixture.invalid/")
         .await?;
     reset(&storage, source.id).await?;
+    let mut position_listener = PgListener::connect(database_url).await?;
+    position_listener
+        .listen("leveraged_prediction_positions")
+        .await?;
     seed(&storage, source.id).await?;
+    let notification = tokio::time::timeout(Duration::from_secs(2), position_listener.recv())
+        .await
+        .context("position notification timed out")??;
+    let notification: serde_json::Value = serde_json::from_str(notification.payload())?;
+    let position_notification = notification["network"] == NETWORK
+        && notification["program_id"] == PROGRAM_ID
+        && notification["user"].is_string()
+        && notification["market_id"].is_number()
+        && notification["position_id"].is_number();
+    ensure!(position_notification);
 
     let first_refresh = leaderboards::refresh(database_url, true, Duration::from_secs(30)).await?;
     let read_pool = storage.pool().clone();
@@ -237,6 +253,7 @@ pub async fn run(database_url: &str) -> Result<LeaderboardFixtureReport> {
         tie_order,
         api_role_select_allowed,
         api_role_forbidden_actions,
+        position_notification,
         sample,
     })
 }

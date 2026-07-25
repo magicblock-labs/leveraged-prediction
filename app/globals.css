@@ -364,7 +364,6 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--ink); outli
   text-transform: uppercase;
   color: var(--mut);
 }
-.positions-header .cap { color: var(--mut); font-size: 12.5px; font-weight: 600; }
 .fallback-payout {
   display: flex;
   align-items: center;
@@ -416,6 +415,21 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--ink); outli
 .play-row.settling .status-word, .play-row.refunding .status-word { color: var(--wait); }
 .play-row.won .status-word { color: var(--up); }
 .play-row.lost .status-word { color: var(--down); }
+.play-row.breakeven .status-word, .play-row.refunded .status-word { color: var(--wait); }
+.play-row.is-celebrating {
+  position: relative;
+  animation: win-pop 600ms ease-out;
+}
+.play-row.is-celebrating::after {
+  position: absolute;
+  inset: 4px 0;
+  border: 1px solid color-mix(in srgb, var(--up) 65%, transparent);
+  border-radius: 12px;
+  box-shadow: 0 0 24px color-mix(in srgb, var(--up) 28%, transparent);
+  content: "";
+  pointer-events: none;
+  animation: win-glow 1.8s ease-out forwards;
+}
 .tbar {
   display: block;
   margin-top: 7px;
@@ -951,6 +965,16 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--ink); outli
 .history-unavailable button { flex: 0 0 auto; margin: 0; }
 
 @keyframes soft-pulse { 50% { opacity: 0.25; } }
+@keyframes win-pop {
+  0% { transform: scale(1); }
+  35% { transform: scale(1.015); }
+  100% { transform: scale(1); }
+}
+@keyframes win-glow {
+  0% { opacity: 0; transform: scale(0.98); }
+  20% { opacity: 1; }
+  100% { opacity: 0; transform: scale(1.02); }
+}
 
 /* ── desktop: full-height chart, right order rail ───── */
 @media (min-width: 1000px) {

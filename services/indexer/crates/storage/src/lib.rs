@@ -8,7 +8,7 @@ use std::str::FromStr;
 
 pub const EVENT_CONTRACT_VERSION: i16 = 2;
 pub const LEGACY_EVENT_CONTRACT_VERSION: i16 = 1;
-pub const SCHEMA_MIGRATION_VERSION: i64 = 4;
+pub const SCHEMA_MIGRATION_VERSION: i64 = 5;
 
 #[derive(Clone)]
 pub struct Storage {

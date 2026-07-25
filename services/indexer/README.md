@@ -9,6 +9,21 @@ This directory contains two independently deployable Rust binaries over one Post
 Neither service signs or submits a Solana transaction. The frontend keeps direct ER websocket and
 session-signed transaction paths for live gameplay.
 
+## Position history stream
+
+The public API exposes both the paginated position history endpoint and a public WebSocket:
+
+```text
+GET /v1/users/{wallet}/positions?market_id={market_id}&limit=100
+WS  /v1/users/{wallet}/positions/stream?market_id={market_id}
+```
+
+The WebSocket sends `{"type":"snapshot","positions":[...]}` immediately after connection, then
+`{"type":"upsert","position":{...}}` whenever that position changes. It never sends deletes.
+Postgres emits only the position identity after the writer transaction commits; the API reads the
+canonical `api.position_history` row before broadcasting it. Clients should fetch every HTTP page
+on refresh, merge by `(market_id, position_id)`, and treat terminal lifecycle states as monotonic.
+
 ## Local stack
 
 Copy `deploy/env.example` to an untracked environment file and set a real

@@ -107,7 +107,7 @@ pub struct LeaderboardEntry {
     pub win_rate_bps: i32,
 }
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Clone, Debug, Serialize, sqlx::FromRow)]
 pub struct PositionItem {
     pub market_id: i32,
     pub position_id: i64,

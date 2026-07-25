@@ -229,15 +229,23 @@ export function PriceArena({ snapshot, plays, now }: PriceArenaProps) {
           graphics.stroke({ color: theme.ink, alpha: 1, width: 2, join: "round", cap: "round" });
         }
 
-        // entry lines for open plays — the win/lose reference
+        // Entry lines persist through settlement while they remain in the visible time window.
         for (const play of currentPlays) {
-          if (!["active", "settling", "refunding"].includes(play.status)) continue;
-          const settlingState = play.status !== "active";
-          const color = settlingState ? theme.wait : play.direction === "up" ? theme.up : theme.down;
+          const settlingState = ["settling", "refunding"].includes(play.status);
+          const color =
+            play.status === "lost"
+              ? theme.down
+              : play.status === "won"
+                ? theme.up
+                : play.status === "breakeven" || play.status === "refunded" || settlingState
+                  ? theme.wait
+                  : play.direction === "up"
+                    ? theme.up
+                    : theme.down;
           const playY = geometry.y(play.entryPrice, view);
           graphics.moveTo(geometry.x(play.openedAt, view), playY)
             .lineTo(geometry.x(play.expiresAt, view), playY)
-            .stroke({ color, alpha: settlingState ? 0.5 : 0.85, width: 2 });
+            .stroke({ color, alpha: settlingState ? 0.5 : 0.85, width: play.status === "lost" ? 3 : 2 });
           graphics.circle(geometry.x(play.expiresAt, view), playY, 7).stroke({ color, alpha: 0.9, width: 2 });
           graphics.circle(geometry.x(play.expiresAt, view), playY, 2.5).fill({ color, alpha: 1 });
         }

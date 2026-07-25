@@ -11,11 +11,15 @@
     "liquidity history",
     "position lookup",
     "market summary",
-    "health and metrics"
+    "health and metrics",
+    "transactional position notifications",
+    "public position snapshot and upsert websocket"
   ],
   "frontend": [
     "cursor_stale restarts from the newest page",
     "indexer outage does not enter the gameplay transaction path",
-    "minor-unit strings are formatted without Number conversion"
+    "minor-unit strings are formatted without Number conversion",
+    "all position pages are fetched on refresh",
+    "account additions persist until canonical websocket settlement"
   ]
 }

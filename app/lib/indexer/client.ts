@@ -31,14 +31,21 @@ export interface IndexedPosition {
   position_id: number;
   user: string | null;
   direction: "up" | "down" | null;
+  entry_price: string | null;
   collateral: string | null;
+  expires_at: string | null;
   lifecycle_status: "open" | "settled" | "refunded";
   checkpoint_status: "er_only" | "base_observed" | "not_applicable";
   outcome: "won" | "lost" | "breakeven" | "refunded" | null;
   payout_amount: string | null;
   net_pnl: string | null;
+  opened_at: string | null;
   closed_at: string | null;
 }
+
+export type PositionStreamMessage =
+  | { type: "snapshot"; positions: IndexedPosition[] }
+  | { type: "upsert"; position: IndexedPosition };
 
 interface ErrorEnvelope {
   error?: {
@@ -105,6 +112,53 @@ export async function fetchCompletedPositions(
     `${baseUrl}/v1/users/${encodeURIComponent(wallet)}/positions?${query}`,
     signal,
   );
+}
+
+export async function fetchPositions(
+  baseUrl: string,
+  wallet: string,
+  marketId: number,
+  cursor?: string,
+  signal?: AbortSignal,
+): Promise<IndexerEnvelope<IndexedPosition[]>> {
+  const query = new URLSearchParams({
+    market_id: marketId.toString(),
+    limit: "100",
+  });
+  if (cursor) query.set("cursor", cursor);
+  return request(
+    `${baseUrl}/v1/users/${encodeURIComponent(wallet)}/positions?${query}`,
+    signal,
+  );
+}
+
+export async function fetchAllPositions(
+  baseUrl: string,
+  wallet: string,
+  marketId: number,
+  signal?: AbortSignal,
+): Promise<IndexedPosition[]> {
+  const positions: IndexedPosition[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await fetchPositions(baseUrl, wallet, marketId, cursor, signal);
+    positions.push(...page.data);
+    cursor = page.meta.next_cursor;
+  } while (cursor);
+  return positions;
+}
+
+export function positionStreamUrl(
+  baseUrl: string,
+  wallet: string,
+  marketId: number,
+): string {
+  const url = new URL(
+    `${baseUrl}/v1/users/${encodeURIComponent(wallet)}/positions/stream`,
+  );
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  url.searchParams.set("market_id", marketId.toString());
+  return url.toString();
 }
 
 export async function withCursorRecovery<T>(

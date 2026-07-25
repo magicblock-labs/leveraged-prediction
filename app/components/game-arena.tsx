@@ -13,6 +13,7 @@ import { useGameSession } from "@/app/hooks/use-game-session";
 import { usePlayTransaction } from "@/app/hooks/use-play-transaction";
 import { useDevnetFaucet } from "@/app/hooks/use-devnet-faucet";
 import { useIndexedHistory } from "@/app/hooks/use-indexed-history";
+import { usePersistentPositions } from "@/app/hooks/use-persistent-positions";
 import type { Direction } from "@/app/lib/domain";
 
 function compactAddress(address: string): string {
@@ -42,13 +43,31 @@ export function GameArena() {
 
   const now = clock ?? snapshot?.capturedAt ?? 0;
 
-  const plays = useMemo(
-    () => [
-      ...(transaction.pendingPlay ? [transaction.pendingPlay] : []),
-      ...(snapshot?.plays ?? []),
-    ],
-    [snapshot?.plays, transaction.pendingPlay],
+  const persistent = usePersistentPositions(
+    wallet.address,
+    snapshot?.marketId ?? null,
+    snapshot?.plays ?? [],
+    snapshot?.currentPrice ?? 0,
+    now,
   );
+  const plays = useMemo(
+    () => {
+      if (
+        !transaction.pendingPlay ||
+        persistent.plays.some((play) => play.id === transaction.pendingPlay?.id)
+      ) {
+        return persistent.plays;
+      }
+      return [transaction.pendingPlay, ...persistent.plays];
+    },
+    [persistent.plays, transaction.pendingPlay],
+  );
+  const occupiedPositions =
+    (snapshot?.plays.length ?? 0) +
+    (transaction.pendingPlay &&
+    !snapshot?.plays.some((play) => play.id === transaction.pendingPlay?.id)
+      ? 1
+      : 0);
 
   const placePlay = (direction: Direction, amount: number) => {
     if (feedback && "vibrate" in navigator) navigator.vibrate(24);
@@ -167,7 +186,7 @@ export function GameArena() {
         <aside className="rail">
           <CommandDeck
             snapshot={snapshot}
-            occupiedPositions={plays.length}
+            occupiedPositions={occupiedPositions}
             busy={transaction.busy}
             sessionReady={session.ready}
             submissionReady={transaction.submissionReady}
@@ -180,7 +199,7 @@ export function GameArena() {
           <YourPlays
             plays={plays}
             now={now}
-            capacity={snapshot.maxPositions}
+            celebratingIds={persistent.celebratingIds}
             fallbackClaimableUsd={snapshot.fallbackClaimableUsd}
             claimBusy={transaction.claimBusy}
             onClaimFallback={() => void transaction.claimFallback()}
