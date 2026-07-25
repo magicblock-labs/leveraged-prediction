@@ -1166,6 +1166,10 @@ async fn timed<T>(
     state: &ApiState,
     future: impl Future<Output = Result<T, sqlx::Error>>,
 ) -> Result<T, ApiError> {
+    if state.query_timeout.is_zero() {
+        state.metrics.record_query_timeout();
+        return Err(ApiError::unavailable());
+    }
     match tokio::time::timeout(state.query_timeout, future).await {
         Ok(result) => result.map_err(ApiError::from),
         Err(_) => {
