@@ -28,10 +28,12 @@ use solana_transaction_status::{option_serializer::OptionSerializer, UiTransacti
 
 use crate::reconcile::dead_letters::{self, FailureKind};
 
+pub const EVENT_CURSOR: &str = "transaction_crawler";
+
 #[derive(Debug, Serialize)]
 pub struct IngestReport {
     source_id: i64,
-    cursor_before: Option<String>,
+    pub cursor_before: Option<String>,
     pub cursor_found: bool,
     overlap_transactions: usize,
     pub transactions_scanned: usize,
@@ -40,6 +42,13 @@ pub struct IngestReport {
     pub domain_events_applied: usize,
     first_signature: Option<String>,
     last_signature: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LiveIngestReport {
+    pub events_applied: usize,
+    pub failed_transaction: bool,
+    pub pre_v2_transaction: bool,
 }
 
 pub async fn recent(
@@ -66,7 +75,7 @@ pub async fn recent_with_storage(
     let source = storage.ensure_source(network, layer, endpoint).await?;
     let client = RpcClient::new_with_commitment(endpoint.to_owned(), CommitmentConfig::confirmed());
     let cursor_before = storage
-        .cursor(source.id, "transaction_crawler")
+        .cursor(source.id, EVENT_CURSOR)
         .await?
         .and_then(|(_, _, signature)| signature);
     let maximum = limit.clamp(1, 10_000);
@@ -153,7 +162,7 @@ pub async fn recent_with_storage(
             storage
                 .advance_cursor(
                     &source,
-                    "transaction_crawler",
+                    EVENT_CURSOR,
                     &signature.to_string(),
                     slot,
                     Some(&signature.to_string()),
@@ -168,70 +177,15 @@ pub async fn recent_with_storage(
             OptionSerializer::Some(logs) => logs,
             OptionSerializer::None | OptionSerializer::Skip => Vec::new(),
         };
-        let mut observations = Vec::new();
-        for (log_index, encoded) in program_data_logs(&logs, &PROGRAM_ID.to_string()) {
-            let instruction_path = format!("log/{log_index}");
-            let data = match STANDARD.decode(encoded) {
-                Ok(data) => data,
-                Err(error) => {
-                    dead_letters::record(
-                        storage.pool(),
-                        &source,
-                        &signature.to_string(),
-                        slot,
-                        &instruction_path,
-                        FailureKind::MalformedPayload,
-                        encoded.as_bytes(),
-                        serde_json::json!({ "error": error.to_string(), "encoding": "base64" }),
-                    )
-                    .await?;
-                    continue;
-                }
-            };
-            match decode_event(&data) {
-                Ok(Some(event)) => {
-                    observations.push(Observation {
-                        source: source.clone(),
-                        program_id: PROGRAM_ID.to_string(),
-                        signature: signature.to_string(),
-                        slot,
-                        block_time,
-                        instruction_path,
-                        cursor_name: "transaction_crawler".to_owned(),
-                        cursor_value: signature.to_string(),
-                        event,
-                    });
-                    domain_events_applied += 1;
-                }
-                Ok(None) => {}
-                Err(kind) => {
-                    dead_letters::record(
-                        storage.pool(),
-                        &source,
-                        &signature.to_string(),
-                        slot,
-                        &instruction_path,
-                        kind,
-                        &data,
-                        serde_json::json!({ "event_contract_version": 2 }),
-                    )
-                    .await?;
-                }
-            }
-        }
-        if observations.is_empty() {
-            storage
-                .advance_cursor(
-                    &source,
-                    "transaction_crawler",
-                    &signature.to_string(),
-                    slot,
-                    Some(&signature.to_string()),
-                )
-                .await?;
-        } else {
-            storage.apply_batch(&observations).await?;
-        }
+        domain_events_applied += apply_program_logs(
+            storage,
+            &source,
+            &signature.to_string(),
+            slot,
+            block_time,
+            &logs,
+        )
+        .await?;
     }
 
     Ok(IngestReport {
@@ -246,6 +200,109 @@ pub async fn recent_with_storage(
         first_signature,
         last_signature,
     })
+}
+
+pub async fn logs_with_storage(
+    storage: &Storage,
+    source: &leveraged_prediction_storage::Source,
+    signature: &str,
+    slot: u64,
+    failed_transaction: bool,
+    logs: &[String],
+    observed_at: DateTime<Utc>,
+    v2_min_slot: u64,
+) -> Result<LiveIngestReport> {
+    let signature = Signature::from_str(signature)
+        .context("logsSubscribe returned an invalid transaction signature")?
+        .to_string();
+    let pre_v2_transaction = slot < v2_min_slot;
+    let slot = i64::try_from(slot).context("logsSubscribe slot exceeds Postgres BIGINT")?;
+    if failed_transaction || pre_v2_transaction {
+        storage
+            .advance_cursor(source, EVENT_CURSOR, &signature, slot, Some(&signature))
+            .await?;
+        return Ok(LiveIngestReport {
+            events_applied: 0,
+            failed_transaction,
+            pre_v2_transaction: !failed_transaction && pre_v2_transaction,
+        });
+    }
+    let events_applied =
+        apply_program_logs(storage, source, &signature, slot, Some(observed_at), logs).await?;
+    Ok(LiveIngestReport {
+        events_applied,
+        failed_transaction: false,
+        pre_v2_transaction: false,
+    })
+}
+
+async fn apply_program_logs(
+    storage: &Storage,
+    source: &leveraged_prediction_storage::Source,
+    signature: &str,
+    slot: i64,
+    block_time: Option<DateTime<Utc>>,
+    logs: &[String],
+) -> Result<usize> {
+    let mut observations = Vec::new();
+    for (log_index, encoded) in program_data_logs(logs, &PROGRAM_ID.to_string()) {
+        let instruction_path = format!("log/{log_index}");
+        let data = match STANDARD.decode(encoded) {
+            Ok(data) => data,
+            Err(error) => {
+                dead_letters::record(
+                    storage.pool(),
+                    source,
+                    signature,
+                    slot,
+                    &instruction_path,
+                    FailureKind::MalformedPayload,
+                    encoded.as_bytes(),
+                    serde_json::json!({ "error": error.to_string(), "encoding": "base64" }),
+                )
+                .await?;
+                continue;
+            }
+        };
+        match decode_event(&data) {
+            Ok(Some(event)) => {
+                observations.push(Observation {
+                    source: source.clone(),
+                    program_id: PROGRAM_ID.to_string(),
+                    signature: signature.to_owned(),
+                    slot,
+                    block_time,
+                    instruction_path,
+                    cursor_name: EVENT_CURSOR.to_owned(),
+                    cursor_value: signature.to_owned(),
+                    event,
+                });
+            }
+            Ok(None) => {}
+            Err(kind) => {
+                dead_letters::record(
+                    storage.pool(),
+                    source,
+                    signature,
+                    slot,
+                    &instruction_path,
+                    kind,
+                    &data,
+                    serde_json::json!({ "event_contract_version": 2 }),
+                )
+                .await?;
+            }
+        }
+    }
+    let events_applied = observations.len();
+    if observations.is_empty() {
+        storage
+            .advance_cursor(source, EVENT_CURSOR, signature, slot, Some(signature))
+            .await?;
+    } else {
+        storage.apply_batch(&observations).await?;
+    }
+    Ok(events_applied)
 }
 
 fn decode_event(data: &[u8]) -> std::result::Result<Option<DomainEvent>, FailureKind> {

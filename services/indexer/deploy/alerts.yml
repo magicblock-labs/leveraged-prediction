@@ -13,7 +13,7 @@ groups:
         labels:
           severity: page
         annotations:
-          summary: Leveraged Prediction indexer has failed three cycles in five minutes
+          summary: Leveraged Prediction indexer has failed three subscription sessions in five minutes
       - alert: LeveragedPredictionDeadLetters
         expr: increase(leveraged_prediction_indexer_dead_letters[15m]) > 0
         labels:

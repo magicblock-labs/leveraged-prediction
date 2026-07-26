@@ -2191,6 +2191,7 @@ dependencies = [
  "carbon-rpc-transaction-crawler-datasource",
  "chrono",
  "clap",
+ "futures-util",
  "hex",
  "leveraged-prediction-storage",
  "reqwest",

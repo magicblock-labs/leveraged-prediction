@@ -2,8 +2,8 @@
 
 This directory contains two independently deployable Rust binaries over one PostgreSQL 17 database:
 
-- `leveraged-prediction-indexer`: router-aware read-only Solana/ER ingestion, exact-account
-  reconciliation, Postgres projections, and leaderboard refresh;
+- `leveraged-prediction-indexer`: router-aware confirmed ER `logsSubscribe` ingestion, startup
+  exact-account reconciliation, Postgres projections, and leaderboard refresh;
 - `leveraged-prediction-api`: public read-only history and leaderboard API.
 
 Neither service signs or submits a Solana transaction. The frontend keeps direct ER websocket and
@@ -54,7 +54,9 @@ Required production values:
 
 Important bounds are listed in `deploy/env.example`. The recommended production policy is:
 
-- indexer: one active replica per Market/source set, 10 database connections, 5-second loop;
+- indexer: one active replica per Market/source set, 10 database connections, confirmed
+  `logsSubscribe`, one-second reconnect delay, 30-second route verification, and a bounded
+  cursor-based catch-up only at startup/reconnect;
 - API: two replicas initially, autoscaling up to 10, 20 connections per replica, 256 concurrent
   requests per replica;
 - edge rate limit: 60 requests/minute/IP with a burst of 20;
@@ -83,17 +85,17 @@ Reprojection procedure:
 
 1. Stop the writer; leave the API serving the last projection with stale metadata.
 2. Restore to a new database, run migrations, and verify capability grants.
-3. Replay retained raw observations and crawl overlap into the new projections.
+3. Replay retained raw observations and run the bounded cursor catch-up into the new projections.
 4. Run `recovery-fixture`, `leaderboard-fixture`, and the API contract.
 5. Point one canary API at the restored database, compare representative rows, then promote.
 6. Start one writer and monitor cursor, dead-letter, and projection-age metrics.
 
 ## Outage behavior
 
-- RPC/router outage: the writer remains live but readiness becomes stale after 120 seconds; API
-  serves the last projection with `stale: true`.
-- Writer database outage: cycles fail and alert; the API remains independently available if its
-  read connection works.
+- RPC/router/WebSocket outage: the writer reconnects with a bounded cursor catch-up and readiness
+  becomes stale after 120 seconds; API serves the last projection with `stale: true`.
+- Writer database outage: subscription processing fails and alerts; the API remains independently
+  available if its read connection works.
 - API database outage: `/health/ready` returns 503 and the frontend hides only indexed history.
 - Refresh failure: the previous concurrent materialized views remain readable; refresh state retains
   the error and alerts.

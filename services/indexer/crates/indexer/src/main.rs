@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use solana_client::{
     nonblocking::{pubsub_client::PubsubClient, rpc_client::RpcClient},
     rpc_client::GetConfirmedSignaturesForAddress2Config,
-    rpc_config::RpcTransactionConfig,
+    rpc_config::{RpcTransactionConfig, RpcTransactionLogsConfig, RpcTransactionLogsFilter},
 };
 use solana_commitment_config::CommitmentConfig;
 use solana_pubkey::Pubkey;
@@ -51,7 +51,7 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Run the supervised crawler, reconciliation, and leaderboard refresh loop.
+    /// Run routed ER logsSubscribe ingestion with startup recovery and leaderboard refresh.
     Run {
         #[arg(long, value_enum, default_value_t = Network::Devnet)]
         network: Network,
@@ -61,14 +61,16 @@ enum Command {
         v2_min_slot: u64,
         #[arg(long, env = "INDEXER_HEALTH_BIND", default_value = "0.0.0.0:9090")]
         bind: SocketAddr,
-        #[arg(long, env = "INDEXER_POLL_SECONDS", default_value_t = 5)]
-        poll_seconds: u64,
+        #[arg(long, env = "INDEXER_RECONNECT_SECONDS", default_value_t = 1)]
+        reconnect_seconds: u64,
+        #[arg(long, env = "INDEXER_ROUTE_REFRESH_SECONDS", default_value_t = 30)]
+        route_refresh_seconds: u64,
         #[arg(long, env = "LEADERBOARD_REFRESH_SECONDS", default_value_t = 30)]
         refresh_seconds: u64,
         #[arg(long, env = "INDEXER_MAX_STALENESS_SECONDS", default_value_t = 120)]
         maximum_staleness_seconds: u64,
-        #[arg(long, env = "INDEXER_CRAWL_LIMIT", default_value_t = 250)]
-        crawl_limit: usize,
+        #[arg(long, env = "INDEXER_CATCHUP_LIMIT", default_value_t = 1_000)]
+        catchup_limit: usize,
         #[arg(long, env = "INDEXER_DATABASE_POOL_SIZE", default_value_t = 10)]
         database_pool_size: u32,
         #[arg(long)]
@@ -267,7 +269,7 @@ struct ErReport {
     ws_endpoint: String,
     carbon_program_subscribe_boundary: bool,
     carbon_transaction_crawler_boundary: bool,
-    program_subscribe_handshake: bool,
+    logs_subscribe_handshake: bool,
     history_signature: String,
     transaction_fetch: bool,
 }
@@ -280,10 +282,11 @@ async fn main() -> Result<()> {
             database_url,
             v2_min_slot,
             bind,
-            poll_seconds,
+            reconnect_seconds,
+            route_refresh_seconds,
             refresh_seconds,
             maximum_staleness_seconds,
-            crawl_limit,
+            catchup_limit,
             database_pool_size,
             once,
         } => {
@@ -292,10 +295,11 @@ async fn main() -> Result<()> {
                 &database_url,
                 runtime::RuntimeConfig {
                     bind,
-                    poll_interval: Duration::from_secs(poll_seconds),
+                    reconnect_delay: Duration::from_secs(reconnect_seconds),
+                    route_refresh_interval: Duration::from_secs(route_refresh_seconds),
                     refresh_interval: Duration::from_secs(refresh_seconds),
                     maximum_staleness: Duration::from_secs(maximum_staleness_seconds),
-                    crawl_limit,
+                    catchup_limit,
                     v2_min_slot,
                     database_pool_size,
                     once,
@@ -441,7 +445,7 @@ async fn probe(config: ProbeConfig) -> Result<ProbeReport> {
     );
     let carbon_transaction_crawler_boundary = !carbon_crawler.update_types().is_empty();
 
-    verify_program_subscription(&er_ws, &config.program_id).await?;
+    verify_logs_subscription(&er_ws, &config.program_id).await?;
     let (history_signature, transaction_fetch) =
         verify_transaction_history(&er_http, &config.program_id).await?;
 
@@ -471,7 +475,7 @@ async fn probe(config: ProbeConfig) -> Result<ProbeReport> {
             ws_endpoint: redact_url(&er_ws),
             carbon_program_subscribe_boundary,
             carbon_transaction_crawler_boundary,
-            program_subscribe_handshake: true,
+            logs_subscribe_handshake: true,
             history_signature,
             transaction_fetch,
         },
@@ -512,16 +516,23 @@ async fn resolve_route(router: &Url, account: &Pubkey) -> Result<DelegationStatu
     response.result.context("router response had no result")
 }
 
-async fn verify_program_subscription(ws_endpoint: &Url, program_id: &Pubkey) -> Result<()> {
+async fn verify_logs_subscription(ws_endpoint: &Url, program_id: &Pubkey) -> Result<()> {
     let client = tokio::time::timeout(PROBE_TIMEOUT, PubsubClient::new(ws_endpoint.as_str()))
         .await
         .context("ER websocket connection timed out")?
         .context("ER websocket connection failed")?;
-    let (stream, unsubscribe) =
-        tokio::time::timeout(PROBE_TIMEOUT, client.program_subscribe(program_id, None))
-            .await
-            .context("ER programSubscribe handshake timed out")?
-            .context("ER programSubscribe handshake failed")?;
+    let (stream, unsubscribe) = tokio::time::timeout(
+        PROBE_TIMEOUT,
+        client.logs_subscribe(
+            RpcTransactionLogsFilter::Mentions(vec![program_id.to_string()]),
+            RpcTransactionLogsConfig {
+                commitment: Some(CommitmentConfig::confirmed()),
+            },
+        ),
+    )
+    .await
+    .context("ER logsSubscribe handshake timed out")?
+    .context("ER logsSubscribe handshake failed")?;
     drop(stream);
     unsubscribe().await;
     Ok(())
