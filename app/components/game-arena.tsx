@@ -2,17 +2,17 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { CommandDeck } from "@/app/components/command-deck";
+import { BrandMark } from "@/app/components/brand-mark";
 import { PriceArena } from "@/app/components/price-arena";
 import { YourPlays } from "@/app/components/your-plays";
 import { SessionGate } from "@/app/components/session-gate";
+import { SessionIndicator } from "@/app/components/session-indicator";
 import { RouteNav } from "@/app/components/route-nav";
-import { IndexedHistory } from "@/app/components/indexed-history";
 import { useGameSnapshot } from "@/app/hooks/use-game-snapshot";
 import { useGameWallet } from "@/app/hooks/use-game-wallet";
 import { useGameSession } from "@/app/hooks/use-game-session";
 import { usePlayTransaction } from "@/app/hooks/use-play-transaction";
 import { useDevnetFaucet } from "@/app/hooks/use-devnet-faucet";
-import { useIndexedHistory } from "@/app/hooks/use-indexed-history";
 import { usePersistentPositions } from "@/app/hooks/use-persistent-positions";
 import type { Direction } from "@/app/lib/domain";
 
@@ -26,9 +26,10 @@ export function GameArena() {
   const session = useGameSession();
   const transaction = usePlayTransaction(snapshot, refresh, session.session, session.refresh);
   const faucet = useDevnetFaucet(wallet.address, refresh);
-  const indexed = useIndexedHistory(wallet.address, snapshot?.marketId ?? null);
+  const walletAddress = wallet.address;
+  const connectWallet = wallet.connect;
   const [clock, setClock] = useState<number | null>(null);
-  const [feedback, setFeedback] = useState(true);
+  const [sessionPrompted, setSessionPrompted] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
 
   useEffect(() => {
@@ -40,6 +41,17 @@ export function GameArena() {
       window.clearInterval(interval);
     };
   }, []);
+
+  useEffect(() => {
+    const query = new URLSearchParams(window.location.search);
+    if (query.get("session") !== "setup") return;
+    window.history.replaceState(null, "", window.location.pathname);
+    const timeout = window.setTimeout(() => {
+      setSessionPrompted(true);
+      if (!walletAddress) void connectWallet();
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, [connectWallet, walletAddress]);
 
   const now = clock ?? snapshot?.capturedAt ?? 0;
 
@@ -69,8 +81,20 @@ export function GameArena() {
       ? 1
       : 0);
 
+  const requestSession = () => {
+    if (session.ready || session.busy) return;
+    setSessionPrompted(true);
+    if (!wallet.address) {
+      void wallet.connect();
+    }
+  };
+
   const placePlay = (direction: Direction, amount: number) => {
-    if (feedback && "vibrate" in navigator) navigator.vibrate(24);
+    if (!session.ready) {
+      requestSession();
+      return;
+    }
+    setSessionPrompted(false);
     void transaction.submit(direction, amount);
   };
 
@@ -107,18 +131,10 @@ export function GameArena() {
     <main className="app-shell" data-mode={snapshot.mode}>
       <header className="topbar">
         <div className="brand-area">
-          <div className="mark">lever</div>
+          <BrandMark />
           <RouteNav active="trade" />
         </div>
         <div className="topbar-actions">
-          <button
-            className={`quiet-button feedback-toggle ${feedback ? "is-on" : ""}`}
-            onClick={() => setFeedback((value) => !value)}
-            type="button"
-            aria-label={`${feedback ? "Disable" : "Enable"} haptic feedback`}
-          >
-            {feedback ? "Haptics on" : "Haptics off"}
-          </button>
           <button className="quiet-button help-toggle" onClick={() => setShowHelp(true)} type="button">
             How to play
           </button>
@@ -133,6 +149,11 @@ export function GameArena() {
               {faucet.busy ? "Funding…" : "Get test funds"}
             </button>
           ) : null}
+          <SessionIndicator
+            active={session.ready}
+            checking={session.busy && !session.ready}
+            onRequestSetup={requestSession}
+          />
           {wallet.address && session.ready ? (
             <div className="stat-block" title="One-hour session spending allowance remaining">
               <span>Session limit</span>
@@ -145,7 +166,7 @@ export function GameArena() {
           </div>
           <button className="wallet" onClick={() => void wallet.connect()} disabled={wallet.connecting} type="button">
             <span className={`dot ${wallet.address ? "is-connected" : ""}`} />
-            {walletLabel}
+            <span className="wallet-label">{walletLabel}</span>
           </button>
         </div>
       </header>
@@ -207,24 +228,11 @@ export function GameArena() {
         </aside>
       </div>
 
-      <IndexedHistory
-        enabled={indexed.status !== "disabled"}
-        status={indexed.status}
-        leaderboard={indexed.leaderboard}
-        positions={indexed.positions}
-        message={indexed.message}
-        hasMore={Boolean(indexed.positionMeta?.next_cursor)}
-        loadingMore={indexed.loadingMore}
-        restartedPagination={indexed.restartedPagination}
-        onLoadMore={indexed.loadMore}
-        onRetry={indexed.retry}
-      />
-
       <div className="mode-badge"><span className={refreshing ? "pulse" : ""} />{snapshot.notice}</div>
 
       <SessionGate
         key={session.session?.sessionToken ?? "new-session"}
-        visible={Boolean(wallet.address) && !session.ready}
+        visible={sessionPrompted && Boolean(wallet.address) && !session.ready}
         busy={session.busy}
         defaultAllowanceUsd={session.defaultAllowanceUsd}
         walletBalanceUsd={snapshot.walletBalanceUsd}
@@ -233,8 +241,13 @@ export function GameArena() {
         error={session.error}
         faucetAvailable={faucet.available}
         faucetBusy={faucet.busy}
-        onStart={(amount) => void session.start(amount)}
+        onStart={(amount) => {
+          void session.start(amount).then((ready) => {
+            if (ready) setSessionPrompted(false);
+          });
+        }}
         onFund={requestTestFunds}
+        onDismiss={() => setSessionPrompted(false)}
       />
 
       {showHelp ? (

@@ -13,6 +13,7 @@ const sharedProps = {
   faucetBusy: false,
   onStart: () => undefined,
   onFund: () => undefined,
+  onDismiss: () => undefined,
 };
 
 describe("session setup dialog", () => {
@@ -27,6 +28,7 @@ describe("session setup dialog", () => {
     }));
 
     expect(html).toContain("Start your play session");
+    expect(html).toContain("Close session setup");
     expect(html).not.toContain("session-stepper");
     expect(html).toContain("Starting a session authorizes");
   });
