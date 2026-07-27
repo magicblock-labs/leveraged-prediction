@@ -305,6 +305,80 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--ink); outli
   font-weight: 600;
 }
 .follow-button.is-following { opacity: 0; pointer-events: none; }
+.chart-win {
+  position: absolute;
+  z-index: 5;
+  top: 48%;
+  left: 50%;
+  min-width: 184px;
+  padding: 15px 24px 16px;
+  border: 1px solid color-mix(in srgb, var(--up) 60%, var(--card));
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--card) 92%, transparent);
+  box-shadow:
+    0 18px 50px rgba(0, 0, 0, 0.16),
+    0 0 0 7px color-mix(in srgb, var(--up) 10%, transparent),
+    0 0 48px color-mix(in srgb, var(--up) 30%, transparent);
+  text-align: center;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  backdrop-filter: blur(12px);
+  animation: chart-win-land 3.15s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.chart-win > span,
+.chart-win > strong,
+.chart-win > small { position: relative; z-index: 1; display: block; }
+.chart-win > span {
+  color: var(--up);
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+}
+.chart-win > strong {
+  margin: 1px 0;
+  color: var(--ink);
+  font-size: 31px;
+  font-weight: 820;
+  letter-spacing: -1px;
+  line-height: 1.08;
+}
+.chart-win > small {
+  color: var(--mut);
+  font-size: 12px;
+  font-weight: 700;
+}
+.chart-win-burst {
+  position: absolute;
+  z-index: 0;
+  top: 50%;
+  left: 50%;
+  width: 1px;
+  height: 1px;
+}
+.chart-win-burst i {
+  --burst-color: var(--up);
+  position: absolute;
+  top: -3px;
+  left: -2px;
+  width: 4px;
+  height: 9px;
+  border-radius: 3px;
+  background: var(--burst-color);
+  opacity: 0;
+  animation: chart-confetti 1.35s calc(var(--burst-index) * 22ms) cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+.chart-win-burst i:nth-child(3n) { --burst-color: var(--wait); width: 6px; height: 6px; }
+.chart-win-burst i:nth-child(4n) { --burst-color: var(--ink); }
+.price-arena:has(.chart-win)::after {
+  position: absolute;
+  z-index: 4;
+  inset: 0;
+  background: radial-gradient(circle at center, color-mix(in srgb, var(--up) 17%, transparent), transparent 58%);
+  content: "";
+  pointer-events: none;
+  animation: chart-win-flash 1.2s ease-out both;
+}
 
 /* ── ticket ─────────────────────────────────────────── */
 .ticket {
@@ -440,6 +514,43 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--ink); outli
   padding: 13px 2px;
   border-bottom: 1px solid var(--hair);
 }
+.play-row.is-watching {
+  position: relative;
+  isolation: isolate;
+  margin: 8px 0;
+  padding: 15px 12px;
+  border: 1px solid color-mix(in srgb, var(--ink) 8%, var(--hair));
+  border-radius: 15px;
+  background:
+    linear-gradient(110deg, color-mix(in srgb, var(--card) 95%, transparent), color-mix(in srgb, var(--up) 5%, var(--card)));
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.055);
+  overflow: hidden;
+  transition: border-color 180ms ease, background 180ms ease;
+}
+.play-row.is-watching::before {
+  position: absolute;
+  z-index: -1;
+  top: -70%;
+  bottom: -70%;
+  left: -45%;
+  width: 34%;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--up) 12%, transparent), transparent);
+  content: "";
+  pointer-events: none;
+  transform: rotate(12deg);
+  animation: live-card-scan 2.8s ease-in-out infinite;
+}
+.play-row.is-watching.is-chasing {
+  background:
+    linear-gradient(110deg, color-mix(in srgb, var(--card) 95%, transparent), color-mix(in srgb, var(--down) 5%, var(--card)));
+}
+.play-row.is-watching.is-chasing::before {
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--down) 11%, transparent), transparent);
+}
+.play-row.is-watching.is-final-seconds {
+  border-color: color-mix(in srgb, var(--wait) 48%, var(--hair));
+  animation: final-seconds-border 800ms ease-in-out infinite;
+}
 .play-row .chip {
   width: 36px;
   height: 36px;
@@ -454,9 +565,90 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--ink); outli
 }
 .play-row.down .chip { background: var(--down-tint); color: var(--down); }
 .play-row.settling .chip, .play-row.refunding .chip { background: var(--wait-tint); color: var(--wait); }
+.live-countdown {
+  position: relative;
+  width: 58px;
+  height: 58px;
+  flex: 0 0 58px;
+  display: grid;
+  place-content: center;
+  border-radius: 50%;
+  background: conic-gradient(currentColor var(--round-progress), var(--hair) 0);
+  color: var(--wait);
+  text-align: center;
+}
+.live-countdown::before {
+  position: absolute;
+  inset: 3px;
+  border-radius: inherit;
+  background: var(--card);
+  content: "";
+}
+.is-ahead .live-countdown { color: var(--up); }
+.is-chasing .live-countdown { color: var(--down); }
+.is-final-seconds .live-countdown { color: var(--wait); animation: countdown-heartbeat 800ms ease-in-out infinite; }
+.live-countdown strong,
+.live-countdown span { position: relative; z-index: 1; display: block; }
+.live-countdown strong {
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: -0.3px;
+  line-height: 1;
+}
+.live-countdown span {
+  margin-top: 2px;
+  color: var(--mut);
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.8px;
+  line-height: 1;
+  text-transform: uppercase;
+}
 .play-row .what { flex: 1; min-width: 0; }
 .play-row .what strong { display: block; font-size: 14px; font-weight: 700; }
 .play-row .what > span { display: block; color: var(--mut); font-size: 12.5px; }
+.live-play-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.live-play-title > strong { white-space: nowrap; }
+.live-round-badge {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--up-tint);
+  color: var(--up) !important;
+  font-size: 8.5px !important;
+  font-weight: 850;
+  letter-spacing: 0.65px;
+  text-transform: uppercase;
+}
+.is-chasing .live-round-badge { background: var(--down-tint); color: var(--down) !important; }
+.live-round-badge i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 0 currentColor;
+  animation: live-dot 1.2s ease-out infinite;
+}
+.play-momentum {
+  width: fit-content;
+  margin-top: 4px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--wait-tint);
+  color: var(--wait) !important;
+  font-size: 10.5px !important;
+  font-weight: 750;
+}
+.play-momentum.ahead { background: var(--up-tint); color: var(--up) !important; }
+.play-momentum.chasing { background: var(--down-tint); color: var(--down) !important; }
+.finish-line { margin-top: 3px; font-size: 11px !important; }
 .status-word { font-weight: 600; }
 .play-row.settling .status-word, .play-row.refunding .status-word { color: var(--wait); }
 .play-row.won .status-word { color: var(--up); }
@@ -464,7 +656,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--ink); outli
 .play-row.breakeven .status-word, .play-row.refunded .status-word { color: var(--wait); }
 .play-row.is-celebrating {
   position: relative;
-  animation: win-pop 600ms ease-out;
+  animation: win-pop 850ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 .play-row.is-celebrating::after {
   position: absolute;
@@ -474,7 +666,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--ink); outli
   box-shadow: 0 0 24px color-mix(in srgb, var(--up) 28%, transparent);
   content: "";
   pointer-events: none;
-  animation: win-glow 1.8s ease-out forwards;
+  animation: win-glow 3.1s ease-out forwards;
 }
 .tbar {
   display: block;
@@ -487,10 +679,21 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--ink); outli
   overflow: hidden;
 }
 .tbar span { display: block; height: 100%; border-radius: 2px; background: var(--ink); transition: width 80ms linear; }
+.live-tbar { max-width: none; height: 4px; margin-top: 9px; }
+.live-tbar span {
+  position: relative;
+  background: var(--wait);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--wait) 35%, transparent);
+}
+.is-ahead .live-tbar span { background: var(--up); box-shadow: 0 0 10px color-mix(in srgb, var(--up) 38%, transparent); }
+.is-chasing .live-tbar span { background: var(--down); box-shadow: 0 0 10px color-mix(in srgb, var(--down) 35%, transparent); }
 .play-row.settling .tbar span, .play-row.refunding .tbar span { background: var(--wait); }
 .play-row .res { text-align: right; white-space: nowrap; }
 .play-row .res strong { display: block; font-size: 14px; font-weight: 700; }
 .play-row .res span { color: var(--mut); font-size: 11.5px; }
+.play-row.is-watching .res { min-width: 92px; }
+.play-row.is-watching .live-move { font-size: 16px; line-height: 1.15; }
+.play-row.is-watching .live-pnl { display: block; margin-top: 3px; font-size: 11px; font-weight: 700; }
 .claim-note {
   min-height: 26px;
   padding: 0 10px;
@@ -1128,6 +1331,45 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--ink); outli
 }
 
 @keyframes soft-pulse { 50% { opacity: 0.25; } }
+@keyframes chart-win-land {
+  0% { opacity: 0; transform: translate(-50%, -42%) scale(0.72); }
+  10% { opacity: 1; transform: translate(-50%, -50%) scale(1.08); }
+  16%, 82% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -56%) scale(0.96); }
+}
+@keyframes chart-confetti {
+  0% {
+    opacity: 0;
+    transform: rotate(calc(var(--burst-index) * 20deg)) translateY(-12px) scale(0.2);
+  }
+  14% { opacity: 1; }
+  100% {
+    opacity: 0;
+    transform: rotate(calc(var(--burst-index) * 20deg)) translateY(-106px) rotate(160deg) scale(1);
+  }
+}
+@keyframes chart-win-flash {
+  0% { opacity: 0; }
+  16% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes live-card-scan {
+  0%, 22% { transform: translateX(0) rotate(12deg); opacity: 0; }
+  42% { opacity: 1; }
+  74%, 100% { transform: translateX(560%) rotate(12deg); opacity: 0; }
+}
+@keyframes live-dot {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 50%, transparent); }
+  75%, 100% { box-shadow: 0 0 0 6px transparent; }
+}
+@keyframes countdown-heartbeat {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.055); }
+}
+@keyframes final-seconds-border {
+  0%, 100% { box-shadow: 0 8px 24px rgba(0, 0, 0, 0.055), 0 0 0 0 transparent; }
+  50% { box-shadow: 0 8px 24px rgba(0, 0, 0, 0.055), 0 0 0 4px color-mix(in srgb, var(--wait) 9%, transparent); }
+}
 @keyframes win-pop {
   0% { transform: scale(1); }
   35% { transform: scale(1.015); }

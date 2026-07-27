@@ -15,7 +15,7 @@ import {
   positionIdentity,
 } from "@/app/lib/indexer/positions";
 
-const WIN_ANIMATION_MS = 1_800;
+const WIN_ANIMATION_MS = 3_200;
 const MAX_RECONNECT_DELAY_MS = 10_000;
 
 interface PersistentPositionState {

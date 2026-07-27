@@ -201,7 +201,12 @@ export function GameArena() {
               <span className="chg">10-second plays · 1000× sensitivity</span>
             )}
           </section>
-          <PriceArena snapshot={snapshot} plays={plays} now={now} />
+          <PriceArena
+            snapshot={snapshot}
+            plays={plays}
+            now={now}
+            celebratingIds={persistent.celebratingIds}
+          />
         </div>
 
         <aside className="rail">

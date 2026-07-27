@@ -1,7 +1,9 @@
 "use client";
 
+import type { CSSProperties } from "react";
 import type { Play, PlayStatus } from "@/app/lib/domain";
 import { playStatusAt } from "@/app/lib/domain";
+import { positionWatchState } from "@/app/lib/position-presentation";
 
 interface YourPlaysProps {
   plays: Play[];
@@ -25,10 +27,15 @@ const STATUS_LABELS: Record<PlayStatus, string> = {
 
 function contextLine(play: Play, status: PlayStatus, now: number): string {
   const entry = `Entry $${play.entryPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
-  if (status === "active") return `${entry} · ${Math.max(0, (play.expiresAt - now) / 1_000).toFixed(1)}s`;
   if (status === "settling") return `${entry} · refund in ${Math.max(0, (play.refundAt - now) / 1_000).toFixed(1)}s`;
   return entry;
 }
+
+const MOMENTUM_LABELS = {
+  ahead: "You’re ahead",
+  chasing: "Chasing",
+  level: "On the line",
+} as const;
 
 export function YourPlays({ plays, now, celebratingIds, fallbackClaimableUsd = 0, claimBusy = false, onClaimFallback }: YourPlaysProps) {
   return (
@@ -55,21 +62,63 @@ export function YourPlays({ plays, now, celebratingIds, fallbackClaimableUsd = 0
         ) : (
           plays.map((play) => {
             const status = playStatusAt(play, now);
+            const watch = positionWatchState(play, now);
             const finished = status === "won" || status === "lost" || status === "breakeven" || status === "refunded";
-            const progress = Math.max(0, Math.min(1, (now - play.openedAt) / (play.expiresAt - play.openedAt)));
+            const isActive = status === "active";
             return (
               <article
-                className={`play-row ${play.direction} ${status}${celebratingIds?.has(play.id) ? " is-celebrating" : ""}`}
+                className={[
+                  "play-row",
+                  play.direction,
+                  status,
+                  isActive ? `is-watching is-${watch.result}` : "",
+                  watch.isFinalSeconds ? "is-final-seconds" : "",
+                  celebratingIds?.has(play.id) ? "is-celebrating" : "",
+                ].filter(Boolean).join(" ")}
                 key={play.id}
               >
-                <div className="chip" aria-hidden="true">{play.direction === "up" ? "▲" : "▼"}</div>
+                {isActive ? (
+                  <div
+                    className="live-countdown num"
+                    style={{
+                      "--round-progress": `${watch.progress * 360}deg`,
+                    } as CSSProperties}
+                    aria-label={`${watch.remainingSeconds.toFixed(1)} seconds remaining`}
+                  >
+                    <strong>{watch.remainingSeconds.toFixed(1)}</strong>
+                    <span>sec</span>
+                  </div>
+                ) : (
+                  <div className="chip" aria-hidden="true">{play.direction === "up" ? "▲" : "▼"}</div>
+                )}
                 <div className="what">
-                  <strong>{play.direction === "up" ? "Up" : "Down"} · <span className="num">${play.collateralUsd.toFixed(2)}</span> stake</strong>
-                  <span className="num">
-                    <span className="status-word">{STATUS_LABELS[status]}</span> · {contextLine(play, status, now)}
-                  </span>
-                  {status === "active" || status === "settling" || status === "refunding" ? (
-                    <span className="tbar" aria-hidden="true"><span style={{ width: `${progress * 100}%` }} /></span>
+                  {isActive ? (
+                    <>
+                      <div className="live-play-title">
+                        <strong>
+                          {play.direction === "up" ? "▲ Up" : "▼ Down"} ·{" "}
+                          <span className="num">${play.collateralUsd.toFixed(2)}</span>
+                        </strong>
+                        <span className="live-round-badge"><i aria-hidden="true" /> Live</span>
+                      </div>
+                      <span className={`play-momentum ${watch.result}`}>
+                        {MOMENTUM_LABELS[watch.result]}
+                      </span>
+                      <span className="finish-line num">{watch.finishLabel}</span>
+                      <span className="tbar live-tbar" aria-hidden="true">
+                        <span style={{ width: `${watch.progress * 100}%` }} />
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <strong>{play.direction === "up" ? "Up" : "Down"} · <span className="num">${play.collateralUsd.toFixed(2)}</span> stake</strong>
+                      <span className="num">
+                        <span className="status-word">{STATUS_LABELS[status]}</span> · {contextLine(play, status, now)}
+                      </span>
+                    </>
+                  )}
+                  {status === "settling" || status === "refunding" ? (
+                    <span className="tbar" aria-hidden="true"><span style={{ width: "100%" }} /></span>
                   ) : null}
                 </div>
                 <div className="res num">
@@ -80,11 +129,11 @@ export function YourPlays({ plays, now, celebratingIds, fallbackClaimableUsd = 0
                     </>
                   ) : play.priceMovePercent !== undefined && play.liveProfitUsd !== undefined && !finished ? (
                     <>
-                      <strong className={play.priceMovePercent >= 0 ? "positive" : "negative"}>
+                      <strong className={`live-move ${play.priceMovePercent >= 0 ? "positive" : "negative"}`}>
                         {play.priceMovePercent >= 0 ? "+" : "−"}{Math.abs(play.priceMovePercent).toFixed(3)}%
                       </strong>
-                      <span className={play.liveProfitUsd >= 0 ? "positive" : "negative"}>
-                        {play.liveProfitUsd >= 0 ? "+" : "−"}${Math.abs(play.liveProfitUsd).toFixed(2)} live P&amp;L
+                      <span className={`live-pnl ${play.liveProfitUsd >= 0 ? "positive" : "negative"}`}>
+                        {play.liveProfitUsd >= 0 ? "+" : "−"}${Math.abs(play.liveProfitUsd).toFixed(2)}{" "}live P&amp;L
                       </span>
                     </>
                   ) : (
