@@ -9,6 +9,7 @@
 /coverage
 /magicblock-test-storage
 /.env.local
+services/indexer/deploy/*.env
 /.devnet
 .DS_Store
 *.tsbuildinfo

@@ -1,0 +1,23 @@
+FROM rust:1.95-bookworm AS builder
+
+WORKDIR /build
+COPY services/indexer/ ./
+RUN cargo build --locked --release \
+    --bin leveraged-prediction-indexer \
+    --bin leveraged-prediction-api
+
+FROM debian:bookworm-slim AS runtime
+
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 10001 service
+COPY --from=builder \
+    /build/target/release/leveraged-prediction-indexer \
+    /usr/local/bin/leveraged-prediction-indexer
+COPY --from=builder \
+    /build/target/release/leveraged-prediction-api \
+    /usr/local/bin/leveraged-prediction-api
+
+USER service
+CMD ["/usr/local/bin/leveraged-prediction-api"]

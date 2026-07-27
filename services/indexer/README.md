@@ -47,7 +47,8 @@ Local defaults are intentionally loopback-only. They are not production credenti
 
 Required production values:
 
-- `DATABASE_URL`: independent writer or API credential;
+- `DATABASE_URL`: PostgreSQL 17 connection used by the migration release command and both runtime
+  process groups;
 - `INDEXER_V2_MIN_SLOT`: first slot running the checked v2 event ABI;
 - `API_CORS_ORIGINS`: comma-separated exact frontend origins;
 - the base RPC, router, program ID, and Market ID.
@@ -64,9 +65,70 @@ Important bounds are listed in `deploy/env.example`. The recommended production 
 - source/indexer readiness budget: 120 seconds;
 - materialized-view and API stale budget: 120 seconds; normal refresh target: 30 seconds.
 
-The container is portable. The selected first production shape is two small Fly.io Machines
-(one writer, two API Machines) and managed PostgreSQL 17 in the same region. Keep the API behind the
-frontend reverse proxy; do not enable wildcard CORS.
+The container is portable. The selected first production shape is one Fly app with one writer
+Machine and two API Machines backed by a Supabase PostgreSQL 17 project. Keep the Fly region close
+to the Supabase project and configure only the exact Vercel frontend origin in CORS.
+
+The Fly profile uses smaller initial pools than the general recommendation: five writer
+connections and ten API connections per Machine. Each API Machine also holds one dedicated
+PostgreSQL notification connection. Confirm the Supabase connection limit before increasing either
+pool.
+
+## Fly.io with Supabase
+
+The checked-in `fly.toml` uses two process groups from one image:
+
+- `writer`: exactly one active indexer Machine with a private health endpoint on port `9090`;
+- `api`: public HTTP/WebSocket Machines on port `8080`, initially scaled to two.
+
+The Fly proxy configuration limits concurrent requests but does not implement the recommended
+per-IP request rate. Put a rate-limiting proxy in front of the public Fly hostname or add an
+application limiter before treating this as a production internet boundary.
+
+The release command applies SQLx migrations before either process group is updated. The same
+Supabase credential is used for migrations and runtime for the initial devnet deployment. Before a
+mainnet deployment, split migration, writer, and API credentials into separately deployed apps or
+add process-specific database configuration so the runtime services can use the checked database
+roles.
+
+Use the Supabase direct connection string on port `5432` with `sslmode=require`. Fly Machines can
+reach its IPv6 endpoint. Supabase's session-mode pooler on port `5432` is an acceptable fallback.
+Do not use a transaction-mode URL on port `6543`: the public position WebSocket depends on a
+session-persistent PostgreSQL `LISTEN/NOTIFY` connection.
+
+Create and populate an untracked secret file:
+
+```bash
+cp services/indexer/deploy/fly.env.example services/indexer/deploy/fly.env
+```
+
+Set the real `DATABASE_URL`, confirmed `INDEXER_V2_MIN_SLOT`, and exact frontend origin, then create
+the app and stage the secrets:
+
+```bash
+fly apps create <app-name> --org magicblock-tools
+fly secrets import --stage --app <app-name> \
+  < services/indexer/deploy/fly.env
+```
+
+Before the first deploy, change `primary_region` in `services/indexer/fly.toml` if `bom` is not the
+closest Fly region to the Supabase project. Deploy from the repository root:
+
+```bash
+fly deploy . --app <app-name> --config services/indexer/fly.toml
+fly scale count writer=1 api=2 --app <app-name>
+```
+
+Verify both process groups and the public API:
+
+```bash
+fly status --app <app-name>
+fly checks list --app <app-name>
+curl --fail https://<app-name>.fly.dev/health/ready
+```
+
+Set the Vercel frontend's `NEXT_PUBLIC_INDEXER_API_URL` to
+`https://<app-name>.fly.dev` after the API check passes.
 
 ## Data lifecycle and recovery
 
