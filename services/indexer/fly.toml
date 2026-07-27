@@ -1,0 +1,90 @@
+app = "leveraged-prediction-indexer"
+
+# Keep this region close to the Supabase project. "bom" is the initial India deployment default.
+primary_region = "bom"
+kill_signal = "SIGINT"
+kill_timeout = "30s"
+
+[build]
+  dockerfile = "docker/Dockerfile.fly"
+
+[deploy]
+  release_command = "/usr/local/bin/leveraged-prediction-indexer migrate"
+  release_command_timeout = "5m"
+  strategy = "rolling"
+
+[env]
+  API_BIND_ADDR = "0.0.0.0:8080"
+  API_DATABASE_POOL_SIZE = "10"
+  API_MAX_CONCURRENT_REQUESTS = "256"
+  API_MAX_STALENESS_SECONDS = "120"
+  API_QUERY_TIMEOUT_MS = "2000"
+  INDEXER_CATCHUP_LIMIT = "1000"
+  INDEXER_DATABASE_POOL_SIZE = "5"
+  INDEXER_HEALTH_BIND = "0.0.0.0:9090"
+  INDEXER_MAX_STALENESS_SECONDS = "120"
+  INDEXER_NETWORK = "devnet"
+  INDEXER_RECONNECT_SECONDS = "1"
+  INDEXER_ROUTE_REFRESH_SECONDS = "30"
+  LEADERBOARD_REFRESH_SECONDS = "30"
+  LEVERAGED_PREDICTION_MARKET_ID = "1"
+  LEVERAGED_PREDICTION_PROGRAM_ID = "AcvFWjSFrLAAWMynqQmBxeBe8wHRTVhhHtB6byatQLFr"
+  ROUTER_ENDPOINT = "https://devnet-router.magicblock.app/"
+  SOLANA_RPC_ENDPOINT = "https://rpc.magicblock.app/devnet"
+
+[processes]
+  api = "/usr/local/bin/leveraged-prediction-api"
+  writer = "/usr/local/bin/leveraged-prediction-indexer run"
+
+[http_service]
+  processes = ["api"]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 200
+    hard_limit = 256
+
+  [[http_service.checks]]
+    grace_period = "15s"
+    interval = "15s"
+    method = "GET"
+    path = "/health/ready"
+    timeout = "3s"
+
+[checks]
+  [checks.writer_ready]
+    processes = ["writer"]
+    grace_period = "90s"
+    interval = "15s"
+    method = "GET"
+    path = "/health/ready"
+    port = 9090
+    timeout = "5s"
+    type = "http"
+
+[[metrics]]
+  processes = ["api"]
+  port = 8080
+  path = "/metrics"
+
+[[metrics]]
+  processes = ["writer"]
+  port = 9090
+  path = "/metrics"
+
+[[vm]]
+  processes = ["api"]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "512mb"
+
+[[vm]]
+  processes = ["writer"]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "512mb"
