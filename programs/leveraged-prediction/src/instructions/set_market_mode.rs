@@ -3,7 +3,7 @@ use super::*;
 pub fn handler(ctx: Context<AdminMarket>, mode: MarketMode) -> Result<()> {
     ctx.accounts.market.mode = mode;
     emit!(MarketModeChanged {
-        market: ctx.accounts.market.key(),
+        market_id: ctx.accounts.market.market_id,
         mode,
     });
     Ok(())

@@ -1,0 +1,26 @@
+[package]
+name = "carbon-leveraged-prediction-decoder"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["rlib"]
+
+[features]
+default = []
+
+serde = ["dep:serde", "dep:serde-big-array"]
+
+[dependencies]
+borsh.workspace = true
+carbon-core.workspace = true
+serde = { workspace = true, optional = true }
+serde-big-array = { version = "0.5.1", optional = true }
+serde_json.workspace = true
+solana-account.workspace = true
+solana-instruction.workspace = true
+solana-pubkey.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,61 @@
+name: indexer
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_DB: leveraged_prediction_ci
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d leveraged_prediction_ci"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/leveraged_prediction_ci
+      NO_DNA: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - run: cargo fmt --all -- --check
+      - run: cargo test -p leveraged-prediction --lib --locked
+      - run: cargo fmt --manifest-path services/indexer/Cargo.toml --all -- --check
+      - run: cargo test --manifest-path services/indexer/Cargo.toml --workspace --locked
+      - run: cargo run --manifest-path services/indexer/Cargo.toml -p leveraged-prediction-indexer --locked -- migrate
+      - run: cargo run --manifest-path services/indexer/Cargo.toml -p leveraged-prediction-indexer --locked -- migrate
+      - run: cargo run --manifest-path services/indexer/Cargo.toml -p leveraged-prediction-indexer --locked -- recovery-fixture
+      - run: cargo run --manifest-path services/indexer/Cargo.toml -p leveraged-prediction-indexer --locked -- leaderboard-fixture
+      - run: cargo run --manifest-path services/indexer/Cargo.toml -p leveraged-prediction-api --locked -- --network api-fixture --contract-test
+      - run: cargo run --manifest-path services/indexer/Cargo.toml -p leveraged-prediction-api --locked -- --check-openapi
+      - run: docker compose -f services/indexer/docker-compose.yml config --quiet
+      - name: Build and exercise the local service stack
+        run: |
+          docker compose -f services/indexer/docker-compose.yml build indexer api
+          docker compose -f services/indexer/docker-compose.yml up --detach --wait postgres api
+          curl --fail --silent http://127.0.0.1:18080/health/ready
+      - name: Stop the local service stack
+        if: always()
+        run: docker compose -f services/indexer/docker-compose.yml down --volumes --remove-orphans

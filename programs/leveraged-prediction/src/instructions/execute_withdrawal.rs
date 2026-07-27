@@ -51,11 +51,10 @@ pub fn handler(ctx: Context<ExecuteWithdrawal>) -> Result<()> {
     ctx.accounts.user_liquidity.remove_empty_market(market_id);
     ctx.accounts.market.total_shares = remaining_shares;
     emit!(WithdrawalExecuted {
-        market: ctx.accounts.market.key(),
+        market_id,
         user: ctx.accounts.user.key(),
         shares,
         assets,
-        equity_after: remaining_equity,
     });
     Ok(())
 }

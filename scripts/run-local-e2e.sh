@@ -3,7 +3,11 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-WORKSPACE_ROOT="$(cd "$REPO_ROOT/.." && pwd)"
+if [[ "$REPO_ROOT" == */.worktrees/* ]]; then
+  WORKSPACE_ROOT="$(cd "$REPO_ROOT/../.." && pwd)"
+else
+  WORKSPACE_ROOT="$(cd "$REPO_ROOT/.." && pwd)"
+fi
 RUN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/leveraged-prediction-e2e.XXXXXX")"
 STACK_LOG="$RUN_DIR/mb-stack.log"
 STACK_PID=""
@@ -82,6 +86,34 @@ fi
 LOCAL_E2E=1 \
 KEEP_LOCAL_SERVICES="$KEEP_LOCAL_SERVICES" \
 pnpm exec vitest run tests/local-full-flow.test.ts --testTimeout=180000
+
+if [[ -n "${DATABASE_URL:-}" ]]; then
+  NO_DNA=1 cargo run \
+    --manifest-path services/indexer/Cargo.toml \
+    -p leveraged-prediction-indexer \
+    --locked -- \
+    migrate \
+    --database-url "$DATABASE_URL"
+  NO_DNA=1 cargo run \
+    --manifest-path services/indexer/Cargo.toml \
+    -p leveraged-prediction-indexer \
+    --locked -- \
+    ingest-recent \
+    --database-url "$DATABASE_URL" \
+    --rpc-endpoint http://127.0.0.1:7799 \
+    --network localnet \
+    --layer er \
+    --limit 100 \
+    --v2-min-slot 0
+  projected_positions="$(
+    psql "$DATABASE_URL" -Atc \
+      "SELECT count(*) FROM indexer.positions WHERE network = 'localnet' AND lifecycle_status IN ('settled', 'refunded')"
+  )"
+  if [[ "$projected_positions" -lt 2 ]]; then
+    echo "expected two terminal local indexer positions, found $projected_positions" >&2
+    exit 1
+  fi
+fi
 
 COMPLETED=1
 if [[ "$KEEP_LOCAL_SERVICES" == "1" ]]; then

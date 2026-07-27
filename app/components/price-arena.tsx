@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type { MarketSnapshot, Play } from "@/app/lib/domain";
 import {
   CHART_PAST_MS,
@@ -9,11 +9,13 @@ import {
   nicePriceStep,
   type ChartViewport,
 } from "@/app/lib/chart-geometry";
+import { winProfitUsd } from "@/app/lib/position-presentation";
 
 interface PriceArenaProps {
   snapshot: MarketSnapshot;
   plays: Play[];
   now: number;
+  celebratingIds?: ReadonlySet<string>;
 }
 
 interface AxisLabel {
@@ -59,10 +61,15 @@ function formatTimeOffset(milliseconds: number): string {
   return `${seconds > 0 ? "+" : "−"}${Math.abs(seconds)}s`;
 }
 
-export function PriceArena({ snapshot, plays, now }: PriceArenaProps) {
+export function PriceArena({
+  snapshot,
+  plays,
+  now,
+  celebratingIds,
+}: PriceArenaProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
-  const dataRef = useRef({ snapshot, plays, now });
+  const dataRef = useRef({ snapshot, plays, now, celebratingIds });
   const [following, setFollowing] = useState(true);
   const [priceLabels, setPriceLabels] = useState<AxisLabel[]>([]);
   const [timeLabels, setTimeLabels] = useState(() =>
@@ -72,8 +79,8 @@ export function PriceArena({ snapshot, plays, now }: PriceArenaProps) {
   const viewportRef = useRef<ChartViewport>({ x: 0, y: 0 });
 
   useEffect(() => {
-    dataRef.current = { snapshot, plays, now };
-  }, [snapshot, plays, now]);
+    dataRef.current = { snapshot, plays, now, celebratingIds };
+  }, [snapshot, plays, now, celebratingIds]);
 
   useEffect(() => {
     followingRef.current = following;
@@ -138,7 +145,11 @@ export function PriceArena({ snapshot, plays, now }: PriceArenaProps) {
       app.canvas.addEventListener("pointercancel", onPointerUp);
 
       const draw = () => {
-        const { snapshot: current, plays: currentPlays } = dataRef.current;
+        const {
+          snapshot: current,
+          plays: currentPlays,
+          celebratingIds: currentCelebrations,
+        } = dataRef.current;
         const frameAt = performance.now();
         const wallNow = Date.now();
         const deltaMs = Math.min(frameAt - lastFrameAt, 100);
@@ -229,17 +240,58 @@ export function PriceArena({ snapshot, plays, now }: PriceArenaProps) {
           graphics.stroke({ color: theme.ink, alpha: 1, width: 2, join: "round", cap: "round" });
         }
 
-        // entry lines for open plays — the win/lose reference
+        // Entry lines persist through settlement while they remain in the visible time window.
         for (const play of currentPlays) {
-          if (!["active", "settling", "refunding"].includes(play.status)) continue;
-          const settlingState = play.status !== "active";
-          const color = settlingState ? theme.wait : play.direction === "up" ? theme.up : theme.down;
+          const settlingState = ["settling", "refunding"].includes(play.status);
+          const celebrating = currentCelebrations?.has(play.id) ?? false;
+          const color =
+            play.status === "lost"
+              ? theme.down
+              : play.status === "won"
+                ? theme.up
+                : play.status === "breakeven" || play.status === "refunded" || settlingState
+                  ? theme.wait
+                  : play.direction === "up"
+                    ? theme.up
+                    : theme.down;
           const playY = geometry.y(play.entryPrice, view);
           graphics.moveTo(geometry.x(play.openedAt, view), playY)
             .lineTo(geometry.x(play.expiresAt, view), playY)
-            .stroke({ color, alpha: settlingState ? 0.5 : 0.85, width: 2 });
-          graphics.circle(geometry.x(play.expiresAt, view), playY, 7).stroke({ color, alpha: 0.9, width: 2 });
-          graphics.circle(geometry.x(play.expiresAt, view), playY, 2.5).fill({ color, alpha: 1 });
+            .stroke({
+              color,
+              alpha: settlingState ? 0.5 : 0.85,
+              width: play.status === "lost" || celebrating ? 3 : 2,
+            });
+          const resultX = geometry.x(play.expiresAt, view);
+          graphics.circle(resultX, playY, 7).stroke({ color, alpha: 0.9, width: 2 });
+          graphics.circle(resultX, playY, 2.5).fill({ color, alpha: 1 });
+
+          if (celebrating) {
+            const cycle = (frameAt % 900) / 900;
+            const eased = 1 - Math.pow(1 - cycle, 3);
+            for (let ring = 0; ring < 3; ring += 1) {
+              const ringPhase = (cycle + ring / 3) % 1;
+              graphics
+                .circle(resultX, playY, 12 + ringPhase * 54)
+                .stroke({
+                  color: theme.up,
+                  alpha: (1 - ringPhase) * 0.5,
+                  width: 2,
+                });
+            }
+            for (let particle = 0; particle < 14; particle += 1) {
+              const angle = (particle / 14) * Math.PI * 2 + particle * 0.37;
+              const distance = 16 + eased * (34 + (particle % 4) * 8);
+              const particleX = resultX + Math.cos(angle) * distance;
+              const particleY = playY + Math.sin(angle) * distance * 0.7;
+              graphics
+                .circle(particleX, particleY, 1.5 + (particle % 3) * 0.6)
+                .fill({
+                  color: particle % 4 === 0 ? theme.wait : theme.up,
+                  alpha: 1 - cycle,
+                });
+            }
+          }
         }
 
         // live price marker
@@ -278,6 +330,12 @@ export function PriceArena({ snapshot, plays, now }: PriceArenaProps) {
     followingRef.current = true;
     setFollowing(true);
   };
+  const celebratingPlay = plays.find(
+    (play) => celebratingIds?.has(play.id) && play.status === "won",
+  );
+  const winProfit = celebratingPlay
+    ? winProfitUsd(celebratingPlay)
+    : null;
 
   return (
     <section className="price-arena" ref={hostRef} aria-label="Live price chart">
@@ -293,6 +351,27 @@ export function PriceArena({ snapshot, plays, now }: PriceArenaProps) {
       <button className={`follow-button ${following ? "is-following" : ""}`} onClick={resetFollow} type="button">
         ↪ Return to live
       </button>
+      {celebratingPlay ? (
+        <div
+          className="chart-win"
+          key={celebratingPlay.id}
+          role="status"
+          aria-live="polite"
+        >
+          <div className="chart-win-burst" aria-hidden="true">
+            {Array.from({ length: 18 }, (_, index) => (
+              <i key={index} style={{ "--burst-index": index } as CSSProperties} />
+            ))}
+          </div>
+          <span>Round won</span>
+          <strong className="num">
+            {winProfit === null ? "Nice call" : `+$${winProfit.toFixed(2)}`}
+          </strong>
+          <small>
+            {celebratingPlay.direction === "up" ? "▲ Up" : "▼ Down"} landed
+          </small>
+        </div>
+      ) : null}
       <p className="sr-only">
         Current price {snapshot.currentPrice.toFixed(2)} dollars. The chart can be dragged to inspect history and never places a play.
       </p>

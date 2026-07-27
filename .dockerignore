@@ -1,0 +1,12 @@
+.git
+.github
+.next
+.env
+.env.*
+coverage
+node_modules
+target
+services/indexer/target
+test-ledger
+magicblock-test-storage
+*.log

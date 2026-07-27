@@ -14,8 +14,7 @@ pub fn handler(ctx: Context<DepositLiquidity>, amount: u64, min_shares_out: u128
         );
     }
     let equity_before = ctx.accounts.pool_token_account.amount;
-    let equity_after =
-        require_deposit_capacity(equity_before, amount, MAX_MARKET_EQUITY, first_lp)?;
+    require_deposit_capacity(equity_before, amount, MAX_MARKET_EQUITY, first_lp)?;
     let shares = shares_for_deposit(amount, equity_before, ctx.accounts.market.total_shares)?;
     require!(shares >= min_shares_out, ErrorCode::SlippageExceeded);
     ctx.accounts
@@ -47,11 +46,10 @@ pub fn handler(ctx: Context<DepositLiquidity>, amount: u64, min_shares_out: u128
         .checked_add(shares)
         .ok_or(ErrorCode::MathOverflow)?;
     emit!(LiquidityDeposited {
-        market: ctx.accounts.market.key(),
+        market_id: ctx.accounts.market.market_id,
         user: ctx.accounts.user.key(),
         assets: amount,
         shares,
-        equity_after,
     });
     Ok(())
 }

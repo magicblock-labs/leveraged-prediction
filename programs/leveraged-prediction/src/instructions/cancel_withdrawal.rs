@@ -11,7 +11,7 @@ pub fn handler(ctx: Context<ManageWithdrawal>) -> Result<()> {
     user_market.pending_withdrawal_shares = 0;
     user_market.min_assets_out = 0;
     emit!(WithdrawalCancelled {
-        market: ctx.accounts.market.key(),
+        market_id: ctx.accounts.market.market_id,
         user: ctx.accounts.user.key(),
         shares,
     });

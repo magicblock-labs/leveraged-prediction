@@ -7,6 +7,7 @@ export type PlayStatus =
   | "refunding"
   | "won"
   | "lost"
+  | "breakeven"
   | "refunded";
 
 export type FeedHealth = "live" | "delayed" | "offline";
@@ -69,7 +70,7 @@ export const MAX_GROSS_PROFIT_MULTIPLIER = 5;
 export const PROFIT_FEE_RATE = 0.1;
 
 export function playStatusAt(play: Play, now: number): PlayStatus {
-  if (["won", "lost", "refunded", "submitting"].includes(play.status)) {
+  if (["won", "lost", "breakeven", "refunded", "submitting"].includes(play.status)) {
     return play.status;
   }
   if (now < play.expiresAt) return "active";

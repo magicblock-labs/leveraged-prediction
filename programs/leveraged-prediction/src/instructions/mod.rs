@@ -20,7 +20,7 @@ use crate::state::{
 };
 use crate::{
     settlement_crank_signer, settlement_task_id, FallbackPayoutClaimed, LiquidityDeposited,
-    MarketModeChanged, ProtocolFeesWithdrawn, SettleOutcome, SettlePositionResult,
+    MarketModeChanged, PositionClosed, PositionCreated, PositionOutcome, ProtocolFeesWithdrawn,
     WithdrawalCancelled, WithdrawalExecuted, WithdrawalRequested, COLLATERAL_DECIMALS, CONFIG_SEED,
     FEE_AUTHORITY_SEED, LEVERAGE, MARKET_SEED, MAX_MARKET_EQUITY, MAX_POSITION_COLLATERAL,
     MIN_MARKET_EQUITY, MIN_POSITION_COLLATERAL, ORACLE_EXPONENT, ORACLE_MAX_AGE_SECONDS,

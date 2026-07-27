@@ -1,0 +1,155 @@
+name: leveraged-prediction-indexer
+
+services:
+  postgres:
+    image: postgres:17-bookworm
+    environment:
+      POSTGRES_DB: leveraged_prediction
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-postgres-only}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-55433}:5432"
+    volumes:
+      - indexer-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d leveraged_prediction"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  bootstrap-logins:
+    image: postgres:17-bookworm
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-local-postgres-only}
+      INDEXER_WRITER_PASSWORD: ${INDEXER_WRITER_PASSWORD:-local-writer-only}
+      INDEXER_API_PASSWORD: ${INDEXER_API_PASSWORD:-local-api-only}
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        psql -h postgres -U postgres -d leveraged_prediction \
+          -v ON_ERROR_STOP=1 \
+          --set=writer_password="$${INDEXER_WRITER_PASSWORD}" \
+          --set=api_password="$${INDEXER_API_PASSWORD}" <<'SQL'
+        SELECT format(
+          'CREATE ROLE leveraged_prediction_writer_login LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT',
+          :'writer_password'
+        )
+        WHERE NOT EXISTS (
+          SELECT 1 FROM pg_roles WHERE rolname = 'leveraged_prediction_writer_login'
+        ) \gexec
+        SELECT format(
+          'CREATE ROLE leveraged_prediction_api_login LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT',
+          :'api_password'
+        )
+        WHERE NOT EXISTS (
+          SELECT 1 FROM pg_roles WHERE rolname = 'leveraged_prediction_api_login'
+        ) \gexec
+        ALTER ROLE leveraged_prediction_writer_login PASSWORD :'writer_password';
+        ALTER ROLE leveraged_prediction_api_login PASSWORD :'api_password';
+        ALTER ROLE leveraged_prediction_writer_login INHERIT;
+        ALTER ROLE leveraged_prediction_api_login INHERIT;
+        SQL
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  migrate:
+    build:
+      context: ../..
+      dockerfile: services/indexer/docker/Dockerfile
+      args:
+        BINARY: leveraged-prediction-indexer
+    command: ["migrate"]
+    environment:
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:-local-postgres-only}@postgres:5432/leveraged_prediction
+    depends_on:
+      bootstrap-logins:
+        condition: service_completed_successfully
+    restart: "no"
+
+  grant-runtime:
+    image: postgres:17-bookworm
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-local-postgres-only}
+    command:
+      - /bin/sh
+      - -ec
+      - >-
+        psql -h postgres -U postgres -d leveraged_prediction
+        -v ON_ERROR_STOP=1
+        -c 'GRANT leveraged_prediction_writer TO leveraged_prediction_writer_login WITH INHERIT TRUE'
+        -c 'GRANT leveraged_prediction_api TO leveraged_prediction_api_login WITH INHERIT TRUE'
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
+  indexer:
+    build:
+      context: ../..
+      dockerfile: services/indexer/docker/Dockerfile
+      args:
+        BINARY: leveraged-prediction-indexer
+    command: ["run"]
+    environment:
+      DATABASE_URL: postgres://leveraged_prediction_writer_login:${INDEXER_WRITER_PASSWORD:-local-writer-only}@postgres:5432/leveraged_prediction
+      SOLANA_RPC_ENDPOINT: ${SOLANA_RPC_ENDPOINT:-https://rpc.magicblock.app/devnet}
+      ROUTER_ENDPOINT: ${ROUTER_ENDPOINT:-https://devnet-router.magicblock.app/}
+      LEVERAGED_PREDICTION_PROGRAM_ID: ${LEVERAGED_PREDICTION_PROGRAM_ID:-AcvFWjSFrLAAWMynqQmBxeBe8wHRTVhhHtB6byatQLFr}
+      LEVERAGED_PREDICTION_MARKET_ID: ${LEVERAGED_PREDICTION_MARKET_ID:-1}
+      INDEXER_V2_MIN_SLOT: ${INDEXER_V2_MIN_SLOT:-999999999999}
+      INDEXER_HEALTH_BIND: 0.0.0.0:9090
+      INDEXER_RECONNECT_SECONDS: ${INDEXER_RECONNECT_SECONDS:-1}
+      INDEXER_ROUTE_REFRESH_SECONDS: ${INDEXER_ROUTE_REFRESH_SECONDS:-30}
+      INDEXER_CATCHUP_LIMIT: ${INDEXER_CATCHUP_LIMIT:-1000}
+      INDEXER_MAX_STALENESS_SECONDS: ${INDEXER_MAX_STALENESS_SECONDS:-120}
+      LEADERBOARD_REFRESH_SECONDS: ${LEADERBOARD_REFRESH_SECONDS:-30}
+      INDEXER_DATABASE_POOL_SIZE: ${INDEXER_DATABASE_POOL_SIZE:-10}
+    ports:
+      - "127.0.0.1:${INDEXER_HEALTH_PORT:-19090}:9090"
+    depends_on:
+      grant-runtime:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:9090/health/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 30s
+    stop_grace_period: 20s
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ../..
+      dockerfile: services/indexer/docker/Dockerfile
+      args:
+        BINARY: leveraged-prediction-api
+    environment:
+      DATABASE_URL: postgres://leveraged_prediction_api_login:${INDEXER_API_PASSWORD:-local-api-only}@postgres:5432/leveraged_prediction
+      INDEXER_NETWORK: ${INDEXER_NETWORK:-devnet}
+      LEVERAGED_PREDICTION_PROGRAM_ID: ${LEVERAGED_PREDICTION_PROGRAM_ID:-AcvFWjSFrLAAWMynqQmBxeBe8wHRTVhhHtB6byatQLFr}
+      API_BIND_ADDR: 0.0.0.0:8080
+      API_CORS_ORIGINS: ${API_CORS_ORIGINS:-http://localhost:3000}
+      API_DATABASE_POOL_SIZE: ${API_DATABASE_POOL_SIZE:-20}
+      API_MAX_CONCURRENT_REQUESTS: ${API_MAX_CONCURRENT_REQUESTS:-256}
+      API_QUERY_TIMEOUT_MS: ${API_QUERY_TIMEOUT_MS:-2000}
+      API_MAX_STALENESS_SECONDS: ${API_MAX_STALENESS_SECONDS:-120}
+    ports:
+      - "127.0.0.1:${INDEXER_API_PORT:-18080}:8080"
+    depends_on:
+      grant-runtime:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8080/health/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    stop_grace_period: 20s
+    restart: unless-stopped
+
+volumes:
+  indexer-postgres:

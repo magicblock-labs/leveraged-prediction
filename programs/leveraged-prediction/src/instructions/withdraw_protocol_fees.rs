@@ -12,7 +12,7 @@ pub fn handler(ctx: Context<WithdrawProtocolFees>, amount: u64) -> Result<()> {
         ctx.bumps.derived_fee_authority,
     )?;
     emit!(ProtocolFeesWithdrawn {
-        market: ctx.accounts.market.key(),
+        market_id: ctx.accounts.market.market_id,
         destination: ctx.accounts.destination_token_account.key(),
         assets: amount,
     });

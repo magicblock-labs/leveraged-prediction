@@ -1,0 +1,13 @@
+{
+  "scenarios": [
+    "duplicate_signature",
+    "duplicate_account_data",
+    "out_of_order_delivery",
+    "equal_slots_across_sources",
+    "websocket_disconnect_overlap",
+    "route_change_overlap",
+    "postgres_transaction_rollback",
+    "decoder_rejection",
+    "restart_overlap"
+  ]
+}
