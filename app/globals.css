@@ -69,9 +69,16 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--ink); outli
 }
 
 /* ── top bar ────────────────────────────────────────── */
-.app-shell { min-height: 100dvh; display: flex; flex-direction: column; }
+.app-shell {
+  height: 100dvh;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
 .topbar {
   position: sticky;
+  flex: 0 0 auto;
   top: 0;
   z-index: 20;
   display: flex;
@@ -225,6 +232,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--ink); outli
   display: flex;
   flex-direction: column;
   gap: 20px;
+  overflow: hidden;
 }
 .stage, .rail { display: contents; }
 
@@ -474,7 +482,13 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--ink); outli
 }
 
 /* ── positions ──────────────────────────────────────── */
-.positions { display: flex; flex-direction: column; min-height: 0; }
+.positions {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
 .positions-header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 4px; }
 .positions-header h2 {
   margin: 0;
@@ -506,7 +520,13 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--ink); outli
   font-size: 13px;
   font-weight: 700;
 }
-.plays-list { min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+.plays-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
 .play-row {
   display: flex;
   align-items: center;
@@ -1385,7 +1405,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--ink); outli
 @media (min-width: 1000px) {
   .col {
     max-width: none;
-    height: calc(100dvh - 59px);
+    height: auto;
     padding: 22px 32px;
     gap: 0;
     display: grid;
@@ -1394,14 +1414,30 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--ink); outli
   }
   .stage { display: flex; flex-direction: column; gap: 14px; min-height: 0; }
   .price-arena { flex: 1; height: auto; min-height: 0; }
-  .rail { display: flex; flex-direction: column; gap: 20px; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+  .rail {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    min-height: 0;
+    overflow: hidden;
+  }
   .ticket { flex: 0 0 auto; }
   .amount { flex: 1 1 100%; }
 }
 
 /* ── mobile refinements ─────────────────────────────── */
 @media (max-width: 999px) {
-  .price-arena { height: min(46dvh, 380px); }
+  .col {
+    padding: 14px 20px 16px;
+    display: grid;
+    grid-template-rows:
+      auto
+      minmax(140px, 1fr)
+      auto
+      minmax(96px, 0.55fr);
+    gap: 12px;
+  }
+  .price-arena { height: auto; min-height: 0; }
   .liquidity-layout, .leaderboard-layout { padding-top: 40px; }
 }
 @media (max-width: 640px) {
@@ -1445,6 +1481,23 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--ink); outli
   .your-ranking-metrics { grid-template-columns: 1fr 1fr; }
   .your-ranking-metrics > div:nth-child(2) { border-right: 0; }
   .your-ranking-metrics > div:nth-child(-n + 2) { border-bottom: 1px solid var(--hair); }
+}
+@media (max-width: 999px) and (max-height: 700px) {
+  .col {
+    padding: 8px 16px 10px;
+    grid-template-rows:
+      auto
+      minmax(92px, 1fr)
+      auto
+      minmax(68px, 0.38fr);
+    gap: 8px;
+  }
+  .quote h1 { font-size: 30px; }
+  .quote .chg { font-size: 12px; }
+  .ticket { padding: 14px; }
+  .economics { margin-top: 8px; }
+  .direction-actions { margin-top: 10px; }
+  .play-button { min-height: 52px; }
 }
 @media (max-width: 410px) {
   .brand-wordmark { display: none; }

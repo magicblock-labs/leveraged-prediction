@@ -3,7 +3,10 @@
 import type { CSSProperties } from "react";
 import type { Play, PlayStatus } from "@/app/lib/domain";
 import { playStatusAt } from "@/app/lib/domain";
-import { positionWatchState } from "@/app/lib/position-presentation";
+import {
+  positionProfitUsd,
+  positionWatchState,
+} from "@/app/lib/position-presentation";
 
 interface YourPlaysProps {
   plays: Play[];
@@ -65,6 +68,13 @@ export function YourPlays({ plays, now, celebratingIds, fallbackClaimableUsd = 0
             const watch = positionWatchState(play, now);
             const finished = status === "won" || status === "lost" || status === "breakeven" || status === "refunded";
             const isActive = status === "active";
+            const profit = finished ? positionProfitUsd(play) : null;
+            const profitTone =
+              profit === null || profit === 0
+                ? ""
+                : profit > 0
+                  ? "positive"
+                  : "negative";
             return (
               <article
                 className={[
@@ -122,10 +132,13 @@ export function YourPlays({ plays, now, celebratingIds, fallbackClaimableUsd = 0
                   ) : null}
                 </div>
                 <div className="res num">
-                  {finished && play.payoutUsd !== undefined ? (
+                  {finished && profit !== null ? (
                     <>
-                      <strong>${play.payoutUsd.toFixed(2)}</strong>
-                      <span>Payout</span>
+                      <strong className={profitTone}>
+                        {profit > 0 ? "+" : profit < 0 ? "−" : ""}$
+                        {Math.abs(profit).toFixed(2)}
+                      </strong>
+                      <span className={profitTone}>Net profit</span>
                     </>
                   ) : play.priceMovePercent !== undefined && play.liveProfitUsd !== undefined && !finished ? (
                     <>

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Play } from "@/app/lib/domain";
 import {
+  positionProfitUsd,
   positionWatchState,
   winProfitUsd,
 } from "@/app/lib/position-presentation";
@@ -55,5 +56,13 @@ describe("position presentation", () => {
       winProfitUsd({ ...active, status: "won", payoutUsd: 55 }),
     ).toBe(45);
     expect(winProfitUsd(active)).toBeNull();
+  });
+
+  it("calculates positive, negative, and zero terminal profit from payout", () => {
+    expect(positionProfitUsd({ ...active, status: "won", payoutUsd: 28 })).toBe(18);
+    expect(positionProfitUsd({ ...active, status: "lost", payoutUsd: 0 })).toBe(-10);
+    expect(
+      positionProfitUsd({ ...active, status: "refunded", payoutUsd: 10 }),
+    ).toBe(0);
   });
 });

@@ -2,7 +2,6 @@
 
 import { useId, useState } from "react";
 import type { Direction, MarketSnapshot } from "@/app/lib/domain";
-import { maximumProfit } from "@/app/lib/domain";
 
 interface CommandDeckProps {
   snapshot: MarketSnapshot;
@@ -91,8 +90,7 @@ export function CommandDeck({ snapshot, occupiedPositions, busy = false, session
       </div>
 
       <p className="economics num" aria-live="polite">
-        <b>10 sec · 1000× price move</b> — profit capped at <b className="positive">5× stake</b>
-        {" "}(+${maximumProfit(amount).toFixed(2)} after fee), max loss <b className="negative">−${amount.toFixed(2)}</b>.
+        <b>10 sec · 1000× price move</b>
       </p>
 
       <div className="direction-actions">

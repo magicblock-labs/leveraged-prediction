@@ -38,6 +38,12 @@ export function positionWatchState(
 }
 
 export function winProfitUsd(play: Play): number | null {
-  if (play.status !== "won" || play.payoutUsd === undefined) return null;
-  return Math.max(0, play.payoutUsd - play.collateralUsd);
+  if (play.status !== "won") return null;
+  const profit = positionProfitUsd(play);
+  return profit === null ? null : Math.max(0, profit);
+}
+
+export function positionProfitUsd(play: Play): number | null {
+  if (play.payoutUsd === undefined) return null;
+  return play.payoutUsd - play.collateralUsd;
 }
