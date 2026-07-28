@@ -256,8 +256,17 @@ card radius, `--hair` borders, and quiet typography as the trade page.
   `Shares`, `Current value`, and `Deposited`.
 - Shares are the exact on-chain integer with grouping separators. Current value is the shares'
   pro-rata claim on current pool USDC, formatted to two decimals.
-- Until an indexer supplies cost basis, Deposited renders `Coming soon` with the note
-  `Requires deposit history`. Never infer deposited principal from current share value.
+- Deposited is the remaining cost basis reconstructed from the indexer's complete liquidity-event
+  history. Deposits add their asset amount; executed removals reduce cost basis in proportion to the
+  shares burned. Only show the value when the indexed share total matches the current on-chain share
+  total; otherwise render `Syncing` rather than infer deposited principal from current share value.
+- Market mode, active positions, total shares, and pool balance use a fresh indexer market summary
+  when that field is present. Missing, stale, or unavailable indexed fields fall back to validated
+  live contract state so liquidity actions remain usable. Wallet balance, pending withdrawals,
+  liquidity-account routing, and the authoritative user-share balance always come from live state.
+- The page is its own vertical scroll container beneath the sticky navbar. Its content must remain
+  reachable at desktop and mobile viewport heights even though the shared trade shell is fixed to
+  `100dvh`.
 
 ### Add/remove card
 
@@ -278,9 +287,10 @@ card radius, `--hair` borders, and quiet typography as the trade page.
 
 ### Market details
 
-Show `Pool liquidity`, `Your pool share`, and `Market status` as quiet rows. Market status is
-`Available` only when there are no active positions and deposits are permitted; otherwise use
-`Positions settling` or `Deposits paused`. Status color, when used, must be paired with the text.
+Show `Pool liquidity`, `Your pool share`, `Total LP shares`, and `Market status` as quiet rows.
+Market status is `Available` only when there are no active positions and deposits are permitted;
+otherwise use `Positions settling` or `Deposits paused`. Status color, when used, must be paired with
+the text.
 
 The wallet control, loading/error treatment, focus states, tabular numerals, reduced-motion support,
 and 320px minimum-width quality bar are identical to the trade page.

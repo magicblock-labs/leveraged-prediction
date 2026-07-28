@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { BrandMark } from "@/app/components/brand-mark";
 import { RouteNav } from "@/app/components/route-nav";
 import { SessionIndicator } from "@/app/components/session-indicator";
 import { useGameSession } from "@/app/hooks/use-game-session";
 import { useGameWallet } from "@/app/hooks/use-game-wallet";
+import { useLiquidityIndexer } from "@/app/hooks/use-liquidity-indexer";
 import { useLiquiditySnapshot } from "@/app/hooks/use-liquidity-snapshot";
 import { useLiquidityTransaction } from "@/app/hooks/use-liquidity-transaction";
 import {
@@ -44,7 +45,16 @@ export function LiquidityPage() {
   const session = useGameSession();
   const { snapshot, error, refreshing, refresh } =
     useLiquiditySnapshot(wallet.address);
-  const transaction = useLiquidityTransaction(refresh);
+  const indexer = useLiquidityIndexer(
+    wallet.address,
+    snapshot?.marketId ?? null,
+  );
+  const refreshIndexer = indexer.refresh;
+  const refreshAll = useCallback(async () => {
+    refreshIndexer();
+    await refresh();
+  }, [refresh, refreshIndexer]);
+  const transaction = useLiquidityTransaction(refreshAll);
   const [action, setAction] = useState<LiquidityAction>("add");
   const [amount, setAmount] = useState("");
   const [removeSharesOverride, setRemoveSharesOverride] =
@@ -52,29 +62,69 @@ export function LiquidityPage() {
 
   const values = useMemo(() => {
     if (!snapshot) return null;
-    const poolBalance = BigInt(snapshot.poolBalanceMinor);
-    const totalShares = BigInt(snapshot.totalShares);
+    const livePoolBalance = BigInt(snapshot.poolBalanceMinor);
+    const liveTotalShares = BigInt(snapshot.totalShares);
+    const indexedMarketReady = indexer.status === "ready";
+    const indexedQuoteReady = indexer.status === "ready" &&
+      indexer.market.poolBalanceMinor !== null &&
+      indexer.market.totalShares !== null;
+    const poolBalance = BigInt(
+      indexedMarketReady && indexer.market.poolBalanceMinor !== null
+        ? indexer.market.poolBalanceMinor!
+        : livePoolBalance,
+    );
+    const totalShares = BigInt(
+      indexedMarketReady && indexer.market.totalShares !== null
+        ? indexer.market.totalShares!
+        : liveTotalShares,
+    );
+    const quotePoolBalance = indexedQuoteReady
+      ? poolBalance
+      : livePoolBalance;
+    const quoteTotalShares = indexedQuoteReady
+      ? totalShares
+      : liveTotalShares;
     const userShares = BigInt(snapshot.userShares);
-    const currentValue = BigInt(snapshot.currentValueMinor);
+    const currentValue = assetsForShares(
+      userShares,
+      quotePoolBalance,
+      quoteTotalShares,
+    );
     const pendingShares = BigInt(snapshot.pendingWithdrawalShares);
+    const deposited = indexer.depositedMinor === null
+      ? null
+      : BigInt(indexer.depositedMinor);
+    const indexedShares = indexer.indexedShares === null
+      ? null
+      : BigInt(indexer.indexedShares);
     const walletBalance = snapshot.walletBalanceMinor === null
       ? null
       : BigInt(snapshot.walletBalanceMinor);
+    const marketMode = indexer.status === "ready"
+      ? indexer.market.marketMode ?? snapshot.marketMode
+      : snapshot.marketMode;
+    const activePositions = indexer.status === "ready"
+      ? indexer.market.activePositions ?? snapshot.activePositions
+      : snapshot.activePositions;
     const inputMinor = parseUsdcInput(amount);
     const maxRemovableShares = maximumRemovableShares(
       userShares,
-      poolBalance,
-      totalShares,
-      snapshot.marketMode,
+      quotePoolBalance,
+      quoteTotalShares,
+      marketMode,
     );
     const requestedRemoveShares = action === "remove" && inputMinor
       ? removeSharesOverride ??
-        sharesForAssetsRoundUp(inputMinor, poolBalance, totalShares)
+        sharesForAssetsRoundUp(
+          inputMinor,
+          quotePoolBalance,
+          quoteTotalShares,
+        )
       : 0n;
     const expectedRemoveAssets = assetsForShares(
       requestedRemoveShares,
-      poolBalance,
-      totalShares,
+      quotePoolBalance,
+      quoteTotalShares,
     );
     return {
       poolBalance,
@@ -82,16 +132,33 @@ export function LiquidityPage() {
       userShares,
       currentValue,
       pendingShares,
+      deposited,
+      depositedIsCurrent: indexedShares === userShares,
       walletBalance,
+      marketMode,
+      activePositions,
       inputMinor,
       maxRemovableShares,
       requestedRemoveShares,
       expectedRemoveAssets,
       estimatedAddShares: inputMinor
-        ? sharesForDeposit(inputMinor, poolBalance, totalShares)
+        ? sharesForDeposit(
+            inputMinor,
+            quotePoolBalance,
+            quoteTotalShares,
+          )
         : 0n,
     };
-  }, [action, amount, removeSharesOverride, snapshot]);
+  }, [
+    action,
+    amount,
+    indexer.depositedMinor,
+    indexer.indexedShares,
+    indexer.market,
+    indexer.status,
+    removeSharesOverride,
+    snapshot,
+  ]);
 
   if (!snapshot || !values) {
     return (
@@ -107,7 +174,7 @@ export function LiquidityPage() {
   }
 
   const connected = Boolean(wallet.address);
-  const marketHasRisk = snapshot.activePositions > 0;
+  const marketHasRisk = values.activePositions > 0;
   const pending = values.pendingShares > 0n;
   const addInvalid = !values.inputMinor ||
     values.estimatedAddShares <= 0n ||
@@ -120,7 +187,7 @@ export function LiquidityPage() {
     marketHasRisk ||
     pending ||
     (action === "add"
-      ? snapshot.marketMode !== "open" || addInvalid
+      ? values.marketMode !== "open" || addInvalid
       : removeInvalid);
   const walletLabel = wallet.address
     ? compactAddress(wallet.address)
@@ -156,9 +223,35 @@ export function LiquidityPage() {
 
   const marketStatus = marketHasRisk
     ? "Positions settling"
-    : snapshot.marketMode === "close-only"
+    : values.marketMode === "close-only"
       ? "Deposits paused"
       : "Available";
+  const indexerLoading = indexer.status === "loading";
+  const indexerAvailable =
+    indexer.status === "ready" || indexer.status === "stale";
+  const depositedLabel = !connected
+    ? "—"
+    : values.deposited !== null && values.depositedIsCurrent
+      ? `$${formatUsdcMinor(values.deposited)}`
+      : indexerLoading
+        ? "Loading…"
+        : "Syncing";
+  const depositedNote = !connected
+    ? "Connect wallet for indexed history"
+    : values.deposited !== null && values.depositedIsCurrent
+      ? indexer.status === "stale"
+        ? "Cost basis · indexer updating"
+        : "Remaining indexed cost basis"
+      : indexerAvailable
+        ? "Waiting for indexed share history"
+        : "History temporarily unavailable";
+  const syncLabel = refreshing || indexerLoading
+    ? "Updating"
+    : indexer.status === "ready"
+      ? "Contract + API"
+      : indexer.status === "stale"
+        ? "API updating"
+        : "Contract live";
 
   return (
     <main className="app-shell liquidity-shell">
@@ -215,10 +308,12 @@ export function LiquidityPage() {
           <div className="liquidity-section-heading">
             <div>
               <h2 id="liquidity-portfolio-title">Your liquidity</h2>
-              <p>Live ownership and redemption value from the contract.</p>
+              <p>Contract ownership with indexed deposit history.</p>
             </div>
-            <span className={`sync-state ${refreshing ? "is-syncing" : ""}`}>
-              {refreshing ? "Updating" : "Live"}
+            <span className={`sync-state ${
+              refreshing || indexer.status !== "ready" ? "is-syncing" : ""
+            }`}>
+              {syncLabel}
             </span>
           </div>
           <div className="liquidity-metrics">
@@ -238,10 +333,23 @@ export function LiquidityPage() {
             </div>
             <div>
               <span>Deposited</span>
-              <strong>Coming soon</strong>
-              <small>Requires deposit history</small>
+              <strong className="num">{depositedLabel}</strong>
+              <small>{depositedNote}</small>
             </div>
           </div>
+          {connected &&
+          (indexer.status === "disabled" ||
+            indexer.status === "unavailable") ? (
+            <div className="liquidity-indexer-warning" role="status">
+              <span>
+                Deposit history is temporarily unavailable. Liquidity actions
+                still use live contract state.
+              </span>
+              {indexer.status === "unavailable" ? (
+                <button type="button" onClick={indexer.refresh}>Retry</button>
+              ) : null}
+            </div>
+          ) : null}
         </section>
 
         <div className="liquidity-columns">
@@ -351,7 +459,7 @@ export function LiquidityPage() {
                 Liquidity changes resume when all open positions settle.
               </p>
             ) : null}
-            {action === "add" && snapshot.marketMode === "close-only" ? (
+            {action === "add" && values.marketMode === "close-only" ? (
               <p className="liquidity-blocked-note">
                 Deposits are paused while this market is close-only.
               </p>
@@ -417,7 +525,7 @@ export function LiquidityPage() {
             <div className="liquidity-section-heading">
               <div>
                 <h2 id="market-liquidity-title">Market details</h2>
-                <p>Current contract state for this pool.</p>
+                <p>Indexed market state with live contract fallback.</p>
               </div>
             </div>
             <dl>
@@ -432,6 +540,10 @@ export function LiquidityPage() {
                     ? ownershipPercent(values.userShares, values.totalShares)
                     : "—"}
                 </dd>
+              </div>
+              <div>
+                <dt>Total LP shares</dt>
+                <dd className="num">{formatShares(values.totalShares)}</dd>
               </div>
               <div>
                 <dt>Market status</dt>
