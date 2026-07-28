@@ -122,12 +122,11 @@ export async function readLiveSnapshot(walletAddress?: string): Promise<MarketSn
         positionsAddress,
         true,
       );
-      const [erTokenBalance, baseTokenBalance, payoutBalance] = await Promise.all([
+      const [erTokenBalance, payoutBalance] = await Promise.all([
         erConnection.getTokenAccountBalance(userTokenAccount, "confirmed").catch(() => null),
-        baseConnection.getTokenAccountBalance(userTokenAccount, "confirmed").catch(() => null),
         erConnection.getTokenAccountBalance(payoutEscrowTokenAccount, "confirmed").catch(() => null),
       ]);
-      walletBalanceUsd = erTokenBalance?.value.uiAmount ?? baseTokenBalance?.value.uiAmount ?? null;
+      walletBalanceUsd = erTokenBalance?.value.uiAmount ?? null;
       fallbackClaimableUsd = payoutBalance?.value.uiAmount ?? 0;
     }
   }

@@ -435,6 +435,12 @@ export function useGameSnapshot(walletAddress: string | null) {
     return () => window.clearInterval(interval);
   }, []);
 
+  const setWalletBalanceUsd = useCallback((walletBalanceUsd: number | null) => {
+    setSnapshot((current) => current
+      ? { ...current, walletBalanceUsd }
+      : current);
+  }, []);
+
   return {
     snapshot,
     error: snapshotError,
@@ -443,5 +449,6 @@ export function useGameSnapshot(walletAddress: string | null) {
     positionError: positionError?.key === positionStreamKey ? positionError.message : null,
     refreshing,
     refresh,
+    setWalletBalanceUsd,
   };
 }

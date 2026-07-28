@@ -54,7 +54,7 @@ export function CommandDeck({ snapshot, occupiedPositions, busy = false, session
     ? visibleStatusMessage
     : snapshot.marketMode !== "open"
       ? "Trading is paused while existing positions settle"
-      : fundingMessage ?? sessionMessage ?? visibleStatusMessage;
+      : sessionMessage ?? fundingMessage ?? visibleStatusMessage;
 
   return (
     <section className="ticket" aria-label="Play controls">

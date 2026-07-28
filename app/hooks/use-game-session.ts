@@ -47,7 +47,7 @@ export function useGameSession() {
         setRemainingAllowanceUsd(null);
         setProgress({
           phase: "preparing-accounts",
-          message: "Session found. Continue the remaining setup.",
+          message: "Step 1 of 2 · Continue the remaining base-layer setup.",
         });
         setError(null);
         return;
@@ -66,7 +66,7 @@ export function useGameSession() {
         setRemainingAllowanceUsd(null);
         setProgress({
           phase: "preparing-accounts",
-          message: "Session found. Continue the remaining setup.",
+          message: "Step 1 of 2 · Continue the remaining base-layer setup.",
         });
         setError(null);
       } catch {
@@ -106,9 +106,9 @@ export function useGameSession() {
     setProgress(existingSession
       ? {
           phase: "preparing-accounts",
-          message: "Session found. Continuing the remaining setup…",
+          message: "Step 1 of 2 · Resuming base-layer setup…",
         }
-      : { phase: "creating", message: "Preparing your session…" });
+      : { phase: "creating", message: "Step 1 of 2 · Preparing the base-layer deposit…" });
     try {
       const created = await createGameSessionFlow(
         wallet.publicKey,

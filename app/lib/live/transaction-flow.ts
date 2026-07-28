@@ -1369,7 +1369,7 @@ export async function createGameSessionFlow(
   options: CreateGameSessionOptions = {},
 ): Promise<StoredGameSession> {
   if (!Number.isFinite(allowanceUsd) || allowanceUsd < 1 || allowanceUsd > 1_000) {
-    throw new Error("Session spending limit must be between 1 and 1,000 USDC");
+    throw new Error("One-hour play allowance must be between 1 and 1,000 USDC");
   }
   const allowanceMinor = BigInt(Math.round(allowanceUsd * 1_000_000));
   const context = await loadWriteContext(user);
@@ -1403,7 +1403,7 @@ export async function createGameSessionFlow(
     options.onSessionAvailable?.(session);
     onProgress({
       phase: "preparing-accounts",
-      message: "Session found. Continuing the remaining setup…",
+      message: "Step 1 of 2 · Resuming base-layer setup…",
     });
   } else {
     const signer = Keypair.generate();
@@ -1416,7 +1416,7 @@ export async function createGameSessionFlow(
       context.baseConnection,
     );
 
-    onProgress({ phase: "creating", message: "Preparing your one-hour play session…" });
+    onProgress({ phase: "creating", message: "Step 1 of 2 · Preparing the base-layer deposit…" });
     const createTransaction = await manager.program.methods
       .createSessionV2(false, new BN(validUntil), new BN(0))
       .accounts({
@@ -1464,7 +1464,7 @@ export async function createGameSessionFlow(
   if (baseInstructions.length > 0) {
     onProgress({
       phase: "preparing-accounts",
-      message: "Creating the session and preparing your play balance…",
+      message: "Step 1 of 2 · Setting up accounts and depositing to the arena…",
     });
   }
   await sendBaseSetupAndConfirm(
@@ -1480,7 +1480,7 @@ export async function createGameSessionFlow(
   ]);
   onProgress({
     phase: "approving",
-    message: `Approving a ${allowanceUsd.toFixed(2)} USDC session spending limit…`,
+    message: `Step 2 of 2 · Approving a ${allowanceUsd.toFixed(2)} USDC play allowance on the ER…`,
   });
   await sendAndConfirm(
     context.erConnection,

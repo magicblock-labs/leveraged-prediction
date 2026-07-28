@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { CommandDeck } from "@/app/components/command-deck";
 import { BrandMark } from "@/app/components/brand-mark";
+import { FaucetToast } from "@/app/components/faucet-toast";
 import { PriceArena } from "@/app/components/price-arena";
 import { YourPlays } from "@/app/components/your-plays";
 import { SessionGate } from "@/app/components/session-gate";
@@ -22,10 +23,19 @@ function compactAddress(address: string): string {
 
 export function GameArena() {
   const wallet = useGameWallet();
-  const { snapshot, error, oracleError, marketError, positionError, refreshing, refresh } = useGameSnapshot(wallet.address);
+  const {
+    snapshot,
+    error,
+    oracleError,
+    marketError,
+    positionError,
+    refreshing,
+    refresh,
+    setWalletBalanceUsd,
+  } = useGameSnapshot(wallet.address);
   const session = useGameSession();
   const transaction = usePlayTransaction(snapshot, refresh, session.session, session.refresh);
-  const faucet = useDevnetFaucet(wallet.address, refresh);
+  const faucet = useDevnetFaucet(wallet.address, refresh, setWalletBalanceUsd);
   const walletAddress = wallet.address;
   const connectWallet = wallet.connect;
   const [clock, setClock] = useState<number | null>(null);
@@ -160,7 +170,12 @@ export function GameArena() {
               <strong className="num">${session.remainingAllowanceUsd?.toFixed(2)}</strong>
             </div>
           ) : null}
-          <div className="stat-block">
+          <div
+            className="stat-block"
+            title={snapshot.walletBalanceUsd === null
+              ? "Available after you deposit test USDC into the arena"
+              : "Test USDC available on the MagicBlock arena"}
+          >
             <span>Buying power</span>
             <strong className="num">{snapshot.walletBalanceUsd === null ? "—" : `$${snapshot.walletBalanceUsd.toFixed(2)}`}</strong>
           </div>
@@ -176,7 +191,11 @@ export function GameArena() {
       {marketError ? <div className="system-banner warning" role="status"><strong>Arena updates degraded</strong><span>{marketError} · snapshot fallback remains active</span></div> : null}
       {positionError ? <div className="system-banner warning" role="status"><strong>Position updates degraded</strong><span>{positionError} · snapshot fallback remains active</span></div> : null}
       {snapshot.marketMode === "close-only" ? <div className="system-banner warning" role="status"><strong>Trading paused</strong><span>This market is settling existing positions.</span></div> : null}
-      {faucet.message ? <div className={`faucet-toast ${faucet.tone}`} role={faucet.tone === "error" ? "alert" : "status"}>{faucet.message}</div> : null}
+      <FaucetToast
+        message={faucet.message}
+        tone={faucet.tone}
+        actionUrl={faucet.actionUrl}
+      />
 
       <div className="col">
         <div className="stage">
@@ -247,8 +266,11 @@ export function GameArena() {
         faucetAvailable={faucet.available}
         faucetBusy={faucet.busy}
         onStart={(amount) => {
-          void session.start(amount).then((ready) => {
-            if (ready) setSessionPrompted(false);
+          void session.start(amount).then(async (ready) => {
+            if (ready) {
+              await refresh();
+              setSessionPrompted(false);
+            }
           });
         }}
         onFund={requestTestFunds}

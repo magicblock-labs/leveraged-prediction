@@ -111,12 +111,13 @@ fly secrets import --stage --app <app-name> \
   < services/indexer/deploy/fly.env
 ```
 
-Before the first deploy, change `primary_region` in `services/indexer/fly.toml` if `bom` is not the
-closest Fly region to the Supabase project. Deploy from the repository root:
+Before the first deploy, change `primary_region` in `services/indexer/fly.toml` if `sin` is not the
+closest Fly region to the Supabase project. Deploy from the repository root with Fly's automatic
+high-availability replicas disabled, then keep exactly one Machine for each process group:
 
 ```bash
-fly deploy . --app <app-name> --config services/indexer/fly.toml
-fly scale count writer=1 api=2 --app <app-name>
+fly deploy . --ha=false --app <app-name> --config services/indexer/fly.toml
+fly scale count writer=1 api=1 --app <app-name>
 ```
 
 Verify both process groups and the public API:

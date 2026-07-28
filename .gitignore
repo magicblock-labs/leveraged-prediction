@@ -13,3 +13,5 @@ services/indexer/deploy/*.env
 /.devnet
 .DS_Store
 *.tsbuildinfo
+.vercel
+.env*

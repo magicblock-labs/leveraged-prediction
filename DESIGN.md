@@ -31,7 +31,8 @@ interaction contract — that document's states, copy table, and comprehension g
   until settlement is final.
 - Up to 8 concurrent positions; the market also caps at 8 active.
 - A mandatory one-hour session (user-chosen USDC allowance) makes plays one-tap; session limit and
-  buying power live in the navbar next to the wallet.
+  buying power live in the navbar next to the wallet. Buying power is the routed ER balance only:
+  base-layer funds never appear as buying power before the user deposits them into the arena.
 
 ## 2. Design principles
 
@@ -98,6 +99,8 @@ Scale (desktop / mobile):
 
 Navbar is always present: wordmark left; right side = buying power (label over amount,
 right-aligned) + wallet pill (hairline border, green 7px status dot, compact address `7xKp…9fQ4`).
+Buying power renders as unavailable, never as the base-layer token balance, until the user's
+collateral account is present on the routed ER.
 Navbar is sticky, `--bg` with a `--hair` bottom border. On <560px, hide the buying-power block
 (wallet pill stays).
 
@@ -168,13 +171,31 @@ Section h2 `POSITIONS` with a `n/8` capacity counter. Rows, nearest expiry first
 
 ### Wallet & session
 Wallet pill opens the wallet adapter modal when disconnected; connected state shows the dot +
-compact address. Buying power reflects the session balance and updates on open/settle.
+compact address. Buying power reflects only the routed ER token balance and updates on
+deposit/open/settle. Before the first ER deposit, do not substitute or reveal the base-layer token
+balance as buying power.
 Session-gate and faucet flows adopt this same visual language (cards, hairlines, ink CTAs) —
 no bespoke styling. An inactive session never obscures the market by itself. The setup dialog opens
 only after the user expresses intent by pressing `Play up`, `Play down`, or the inactive session
 control in the navbar; dismissing it returns to the fully visible market. The navbar always pairs
 session state with text (`Session active` or `Session inactive`) rather than color alone. The inactive
 state is actionable and routes to Trade before opening setup when selected from another primary page.
+Session setup has exactly two visible steps that match transaction routing:
+
+1. `Deposit to arena · Base network` groups Session V2 creation, durable account preparation, and
+   the collateral deposit/delegation into the single base-layer wallet transaction.
+2. `Activate session · MagicBlock ER` approves the one-hour token allowance in the single ER wallet
+   transaction.
+
+The dialog may show detailed progress copy inside the active step, but it must not expand the flow
+into more than these two steps. Before Step 1 reaches the ER, show explanatory copy instead of a
+numeric balance. Afterward, label the amount `Arena balance`.
+Devnet funding reports SOL and test-USDC outcomes independently. If test USDC is minted but the SOL
+airdrop fails, preserve the successful mint and show
+`SOL airdrop failed · $X test USDC minted` with a `Get devnet SOL from Solana faucet` link. Treat this
+as a partial-success warning rather than discarding the successful mint or presenting a generic
+failure. Faucet feedback must not expose the combined or base-layer balance before deposit; update
+and display an amount as buying power only when the ER balance exists.
 
 ## 7. Motion
 

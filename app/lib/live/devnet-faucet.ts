@@ -38,6 +38,7 @@ export interface DevnetFaucetResult {
     sol: number;
     baseUsdc: number;
     erUsdc: number;
+    arenaUsdc: number | null;
     totalUsdc: number;
   };
   added: {
@@ -45,6 +46,10 @@ export interface DevnetFaucetResult {
     usdc: number;
   };
   signatures: {
+    sol: string | null;
+    usdc: string | null;
+  };
+  failures: {
     sol: string | null;
     usdc: string | null;
   };
@@ -143,8 +148,8 @@ async function loadAuthority(): Promise<Keypair> {
 async function readTokenAmount(
   connection: Connection,
   tokenAccount: PublicKey,
-): Promise<bigint> {
-  return (await getAccount(connection, tokenAccount, "confirmed").catch(() => null))?.amount ?? 0n;
+): Promise<bigint | null> {
+  return (await getAccount(connection, tokenAccount, "confirmed").catch(() => null))?.amount ?? null;
 }
 
 async function fundWallet(wallet: PublicKey): Promise<DevnetFaucetResult> {
@@ -186,12 +191,15 @@ async function fundWallet(wallet: PublicKey): Promise<DevnetFaucetResult> {
   }
 
   const walletTokenAccount = getAssociatedTokenAddressSync(collateralMint, wallet);
-  let [baseUsdc, erUsdc] = await Promise.all([
+  let [baseUsdcAccount, erUsdcAccount] = await Promise.all([
     readTokenAmount(baseConnection, walletTokenAccount),
     readTokenAmount(erConnection, walletTokenAccount),
   ]);
+  let baseUsdc = baseUsdcAccount ?? 0n;
+  let erUsdc = erUsdcAccount ?? 0n;
   let usdcSignature: string | null = null;
   let addedUsdc = 0n;
+  let usdcFailure: string | null = null;
   const errors: string[] = [];
 
   try {
@@ -215,18 +223,22 @@ async function fundWallet(wallet: PublicKey): Promise<DevnetFaucetResult> {
         [],
         { commitment: "confirmed" },
       );
-      [baseUsdc, erUsdc] = await Promise.all([
+      [baseUsdcAccount, erUsdcAccount] = await Promise.all([
         readTokenAmount(baseConnection, walletTokenAccount),
         readTokenAmount(erConnection, walletTokenAccount),
       ]);
+      baseUsdc = baseUsdcAccount ?? 0n;
+      erUsdc = erUsdcAccount ?? 0n;
       addedUsdc = usdcShortfall;
     }
   } catch (cause) {
-    errors.push(cause instanceof Error ? `Test USDC: ${cause.message}` : "Test USDC funding failed");
+    usdcFailure = cause instanceof Error ? cause.message : "Test USDC funding failed";
+    errors.push(`Test USDC: ${usdcFailure}`);
   }
 
   let solSignature: string | null = null;
   let addedSolLamports = 0;
+  let solFailure: string | null = null;
   let solLamports = await baseConnection.getBalance(wallet, "confirmed");
   try {
     const solShortfall = Math.max(0, DEVNET_FAUCET_SOL_LAMPORTS - solLamports);
@@ -237,7 +249,8 @@ async function fundWallet(wallet: PublicKey): Promise<DevnetFaucetResult> {
       addedSolLamports = solShortfall;
     }
   } catch (cause) {
-    errors.push(cause instanceof Error ? `Devnet SOL: ${cause.message}` : "Devnet SOL airdrop failed");
+    solFailure = cause instanceof Error ? cause.message : "Devnet SOL airdrop failed";
+    errors.push(`Devnet SOL: ${solFailure}`);
   }
 
   return {
@@ -250,6 +263,9 @@ async function fundWallet(wallet: PublicKey): Promise<DevnetFaucetResult> {
       sol: solLamports / LAMPORTS_PER_SOL,
       baseUsdc: Number(baseUsdc) / 1_000_000,
       erUsdc: Number(erUsdc) / 1_000_000,
+      arenaUsdc: erUsdcAccount === null
+        ? null
+        : Number(erUsdcAccount) / 1_000_000,
       totalUsdc: Number(baseUsdc + erUsdc) / 1_000_000,
     },
     added: {
@@ -257,6 +273,7 @@ async function fundWallet(wallet: PublicKey): Promise<DevnetFaucetResult> {
       usdc: Number(addedUsdc) / 1_000_000,
     },
     signatures: { sol: solSignature, usdc: usdcSignature },
+    failures: { sol: solFailure, usdc: usdcFailure },
     errors,
   };
 }

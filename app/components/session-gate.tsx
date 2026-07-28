@@ -3,6 +3,42 @@
 import { useId, useState } from "react";
 import type { SessionProgress } from "@/app/lib/live/transaction-flow";
 
+type StepState = "pending" | "active" | "complete" | "error";
+
+function sessionStepStates(
+  progress: SessionProgress | null,
+  error: string | null,
+): { base: StepState; er: StepState } {
+  const phase = progress?.phase;
+  const baseComplete = phase === "approving" || phase === "ready";
+  const erComplete = phase === "ready";
+  const activeStep = baseComplete ? "er" : "base";
+
+  return {
+    base: baseComplete
+      ? "complete"
+      : error && activeStep === "base"
+        ? "error"
+        : phase
+          ? "active"
+          : "pending",
+    er: erComplete
+      ? "complete"
+      : error && activeStep === "er"
+        ? "error"
+        : phase === "approving"
+          ? "active"
+          : "pending",
+  };
+}
+
+function stepStatus(state: StepState): string {
+  if (state === "complete") return "Complete";
+  if (state === "active") return "In progress";
+  if (state === "error") return "Needs attention";
+  return "Next";
+}
+
 interface SessionGateProps {
   visible: boolean;
   busy: boolean;
@@ -35,6 +71,10 @@ export function SessionGate({
   const inputId = useId();
   const [allowance, setAllowance] = useState(defaultAllowanceUsd);
   if (!visible) return null;
+  const steps = sessionStepStates(progress, error);
+  const busyLabel = progress?.phase === "approving"
+    ? "Step 2 of 2 · Activating…"
+    : "Step 1 of 2 · Depositing…";
 
   return (
     <div
@@ -66,10 +106,10 @@ export function SessionGate({
         </h2>
         <p>
           {hasStoredSession
-            ? "Your session is saved. Continue setup without creating another one."
-            : "Choose the most test USDC this one-hour session may spend. Every play then runs instantly without another wallet prompt."}
+            ? "Your setup is saved. Continue the remaining base or arena step."
+            : "Choose a one-hour play allowance, then approve one base transaction and one arena transaction."}
         </p>
-        <label htmlFor={inputId}>Session spending limit</label>
+        <label htmlFor={inputId}>One-hour play allowance</label>
         <div className="session-allowance">
           <span>$</span>
           <input
@@ -87,9 +127,34 @@ export function SessionGate({
           />
           <small>USDC</small>
         </div>
-        <div className="session-balance">
-          Available: {walletBalanceUsd === null ? "not funded yet" : `$${walletBalanceUsd.toFixed(2)}`}
-        </div>
+        <ol className="session-steps" aria-label="Session setup steps">
+          <li className={steps.base}>
+            <span className="session-step-number" aria-hidden="true">1</span>
+            <span className="session-step-copy">
+              <strong>Deposit to arena</strong>
+              <small>Base network · Set up your session and deposit test USDC.</small>
+            </span>
+            <em>{stepStatus(steps.base)}</em>
+          </li>
+          <li className={steps.er}>
+            <span className="session-step-number" aria-hidden="true">2</span>
+            <span className="session-step-copy">
+              <strong>Activate session</strong>
+              <small>MagicBlock ER · Approve one-tap plays for one hour.</small>
+            </span>
+            <em>{stepStatus(steps.er)}</em>
+          </li>
+        </ol>
+        {walletBalanceUsd === null ? (
+          <div className="session-balance-note">
+            Buying power appears after your deposit reaches the arena.
+          </div>
+        ) : (
+          <div className="session-balance">
+            <span>Arena balance</span>
+            <strong className="num">${walletBalanceUsd.toFixed(2)}</strong>
+          </div>
+        )}
         {progress || error ? (
           <p className={`session-status ${error ? "error" : ""}`} role={error ? "alert" : "status"}>
             {error ?? progress?.message}
@@ -102,10 +167,10 @@ export function SessionGate({
           type="button"
         >
           {busy
-            ? "Setting up session…"
+            ? busyLabel
             : hasStoredSession
               ? "Continue setup"
-              : `Start with a $${allowance.toFixed(2)} limit`}
+              : "Deposit and activate session"}
         </button>
         {faucetAvailable ? (
           <button
@@ -118,8 +183,8 @@ export function SessionGate({
           </button>
         ) : null}
         <small className="session-note">
-          Starting a session authorizes up to your selected test-USDC limit.
-          Liquidity and payout controls remain wallet-only.
+          Two wallet approvals total: everything durable and the deposit happen on base,
+          then the play allowance is approved on the ER.
         </small>
       </section>
     </div>

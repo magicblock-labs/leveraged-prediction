@@ -7,7 +7,7 @@ const sharedProps = {
   visible: true,
   busy: false,
   defaultAllowanceUsd: 100,
-  walletBalanceUsd: 100,
+  walletBalanceUsd: null,
   error: null,
   faucetAvailable: true,
   faucetBusy: false,
@@ -17,34 +17,57 @@ const sharedProps = {
 };
 
 describe("session setup dialog", () => {
-  it("presents setup as one user-facing action", () => {
+  it("presents exactly one base step and one ER step before showing buying power", () => {
     const html = renderToStaticMarkup(createElement(SessionGate, {
       ...sharedProps,
       hasStoredSession: false,
-      progress: {
-        phase: "creating",
-        message: "Creating your one-hour play session…",
-      },
+      progress: null,
     }));
 
     expect(html).toContain("Start your play session");
     expect(html).toContain("Close session setup");
-    expect(html).not.toContain("session-stepper");
-    expect(html).toContain("Starting a session authorizes");
+    expect(html.match(/session-step-copy/g)).toHaveLength(2);
+    expect(html).toContain("Deposit to arena");
+    expect(html).toContain("Base network");
+    expect(html).toContain("Activate session");
+    expect(html).toContain("MagicBlock ER");
+    expect(html).toContain("Buying power appears after your deposit reaches the arena");
+    expect(html).not.toContain("Arena balance");
+    expect(html).toContain("Two wallet approvals total");
   });
 
-  it("marks session creation complete when local session state exists", () => {
+  it("shows the base step as active while the deposit is being prepared", () => {
     const html = renderToStaticMarkup(createElement(SessionGate, {
       ...sharedProps,
+      busy: true,
       hasStoredSession: true,
       progress: {
-        phase: "preparing-accounts",
-        message: "Session found. Continue the remaining setup.",
+        phase: "depositing",
+        message: "Step 1 of 2 · Depositing to the arena…",
       },
     }));
 
     expect(html).toContain("Finish your play session");
-    expect(html).toContain("without creating another one");
-    expect(html).toContain("Continue setup");
+    expect(html).toContain('class="active"');
+    expect(html).toContain("Step 1 of 2 · Depositing…");
+  });
+
+  it("shows the ER step after the arena balance becomes available", () => {
+    const html = renderToStaticMarkup(createElement(SessionGate, {
+      ...sharedProps,
+      busy: true,
+      walletBalanceUsd: 75,
+      hasStoredSession: true,
+      progress: {
+        phase: "approving",
+        message: "Step 2 of 2 · Approving the play allowance on the ER…",
+      },
+    }));
+
+    expect(html).toContain('class="complete"');
+    expect(html).toContain('class="active"');
+    expect(html).toContain("Arena balance");
+    expect(html).toContain("$75.00");
+    expect(html).toContain("Step 2 of 2 · Activating…");
   });
 });

@@ -1,7 +1,7 @@
 app = "leveraged-prediction-indexer"
 
-# Keep this region close to the Supabase project. "bom" is the initial India deployment default.
-primary_region = "bom"
+# Keep this region close to the Supabase project. "sin" matches ap-southeast-1.
+primary_region = "sin"
 kill_signal = "SIGINT"
 kill_timeout = "30s"
 
