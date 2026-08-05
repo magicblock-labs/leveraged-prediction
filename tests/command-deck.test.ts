@@ -27,6 +27,8 @@ const snapshot: MarketSnapshot = {
 function renderDeck(props: {
   sessionReady: boolean;
   submissionReady: boolean;
+  busy?: boolean;
+  statusMessage?: string | null;
 }) {
   return renderToStaticMarkup(createElement(CommandDeck, {
     snapshot,
@@ -50,5 +52,17 @@ describe("play intent controls", () => {
 
     expect(html).toMatch(/class="play-button play-up" disabled/);
     expect(html).toMatch(/class="play-button play-down" disabled/);
+  });
+
+  it("explains that a submitted play is still being reconciled", () => {
+    const html = renderDeck({
+      sessionReady: true,
+      submissionReady: true,
+      busy: true,
+      statusMessage: "Play sent · waiting for Your Plays…",
+    });
+
+    expect(html).toMatch(/class="play-button play-up" disabled/);
+    expect(html).toContain("Play sent · waiting for Your Plays…");
   });
 });

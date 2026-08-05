@@ -13,6 +13,10 @@ import {
 import { readClientLiveConfig } from "@/app/lib/live/client-config";
 import { authorizeErAccess } from "@/app/lib/live/er-access";
 import {
+  refreshedMarketAdvanced,
+  refreshedPositionsIncludeNewPlay,
+} from "@/app/lib/live/play-reconciliation";
+import {
   applyMarketStreamUpdate,
   applyPositionStreamUpdate,
   subscribeMarketState,
@@ -98,6 +102,12 @@ export function useGameSnapshot(walletAddress: string | null) {
           ? positionStreamKeyFor(current, walletAddress)
           : null;
         const nextPositionKey = positionStreamKeyFor(body, walletAddress);
+        const refreshedPositionsChanged = current
+          ? refreshedPositionsIncludeNewPlay(current.plays, body.plays)
+          : false;
+        const refreshedMarketChanged = current
+          ? refreshedMarketAdvanced(current.nextPositionNonce, body.nextPositionNonce)
+          : false;
         let next = body;
         let preservedStream = false;
         if (current && currentKey === nextKey) {
@@ -135,7 +145,8 @@ export function useGameSnapshot(walletAddress: string | null) {
           positionStream &&
           currentPositionKey === nextPositionKey &&
           nextPositionKey === positionStream.key &&
-          Date.now() - positionStream.lastReceivedAt <= 5_000
+          Date.now() - positionStream.lastReceivedAt <= 5_000 &&
+          !refreshedPositionsChanged
         ) {
           next = {
             ...next,
@@ -149,7 +160,8 @@ export function useGameSnapshot(walletAddress: string | null) {
           marketStream &&
           currentKey === nextKey &&
           nextKey === marketStream.key &&
-          Date.now() - marketStream.lastReceivedAt <= 5_000
+          Date.now() - marketStream.lastReceivedAt <= 5_000 &&
+          !refreshedMarketChanged
         ) {
           next = {
             ...next,
