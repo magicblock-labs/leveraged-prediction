@@ -21,6 +21,7 @@ import {
   type TransactionProgress,
 } from "@/app/lib/live/transaction-flow";
 import type { StoredGameSession } from "@/app/lib/live/session-store";
+import { schedulePlayReconciliation } from "@/app/lib/live/play-reconciliation";
 
 function intentPlay(intent: OpenPositionIntent, snapshot: MarketSnapshot): Play {
   return {
@@ -96,6 +97,55 @@ export function usePlayTransaction(
     }, 0);
     return () => window.clearTimeout(timeout);
   }, [intent, snapshot]);
+
+  useEffect(() => {
+    if (
+      !intent ||
+      intent.status !== "confirming" ||
+      !intent.erSignature ||
+      !wallet.publicKey
+    ) return;
+
+    let active = true;
+    const stop = schedulePlayReconciliation(
+      () => {
+        void Promise.allSettled([
+          Promise.resolve().then(refresh),
+          Promise.resolve().then(refreshSession),
+        ]);
+      },
+      async () => {
+        try {
+          const result = await recoverOpenPositionIntent(wallet.publicKey!, intent);
+          if (!active) return;
+          setError(null);
+          if (result.accepted) {
+            await Promise.allSettled([
+              Promise.resolve().then(refresh),
+              Promise.resolve().then(refreshSession),
+            ]);
+            if (!active) return;
+            clearOpenIntent(intent.user, intent.marketId);
+            setIntent(null);
+          } else {
+            setIntent(result.intent);
+          }
+          setProgress(null);
+        } catch (cause) {
+          if (!active) return;
+          setProgress(null);
+          setError(cause instanceof Error
+            ? `Position confirmation is delayed: ${cause.message}`
+            : "Position confirmation is delayed. Check status before playing again.");
+        }
+      },
+    );
+
+    return () => {
+      active = false;
+      stop();
+    };
+  }, [intent, refresh, refreshSession, wallet.publicKey]);
 
   useEffect(() => {
     if (
@@ -275,7 +325,7 @@ export function usePlayTransaction(
     },
     [intent, snapshot],
   );
-  const statusMessage = claimStatus ?? progress?.message ?? intent?.message ?? error ?? (
+  const statusMessage = claimStatus ?? progress?.message ?? error ?? intent?.message ?? (
     snapshot?.mode === "live" && !wallet.publicKey
       ? "Connect a wallet to play"
       : snapshot?.mode === "live" && !session

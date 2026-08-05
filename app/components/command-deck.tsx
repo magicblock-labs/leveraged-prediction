@@ -46,15 +46,13 @@ export function CommandDeck({ snapshot, occupiedPositions, busy = false, session
       ? "Choose Up or Down to start a one-hour session"
       : "Choose Up or Down to connect and start a session"
     : null;
-  const visibleStatusMessage = statusMessage?.startsWith("Playing ") ||
-    statusMessage?.startsWith("Play sent")
-    ? null
-    : statusMessage;
   const actionMessage = needsRecovery
-    ? visibleStatusMessage
-    : snapshot.marketMode !== "open"
+    ? statusMessage ?? "Check the previous play before sending another one"
+    : busy
+      ? statusMessage ?? "Finishing the previous play…"
+      : snapshot.marketMode !== "open"
       ? "Trading is paused while existing positions settle"
-      : sessionMessage ?? fundingMessage ?? visibleStatusMessage;
+      : sessionMessage ?? fundingMessage ?? statusMessage;
 
   return (
     <section className="ticket" aria-label="Play controls">
