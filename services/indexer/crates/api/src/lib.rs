@@ -6,7 +6,7 @@ pub mod openapi;
 
 use std::{future::Future, str::FromStr, time::Duration};
 
-use anyhow::Context;
+use anyhow::{Context, Result};
 use axum::{
     body::{to_bytes, Body},
     extract::{
@@ -29,14 +29,17 @@ use models::{
 };
 use serde::{Deserialize, Serialize};
 use solana_pubkey::Pubkey;
-use sqlx::postgres::PgListener;
+use sqlx::postgres::{PgListener, PgNotification};
 use tokio::sync::broadcast;
 use tower::ServiceExt;
 
 const DEFAULT_LIMIT: u16 = 20;
 const MAX_LIMIT: u16 = 100;
 const POSITION_CHANNEL: &str = "leveraged_prediction_positions";
+const POSITION_HEARTBEAT_CHANNEL: &str = "leveraged_prediction_api_heartbeat";
 const POSITION_BROADCAST_CAPACITY: usize = 1_024;
+const POSITION_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
+const POSITION_HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone)]
 pub struct ApiState {
@@ -46,7 +49,7 @@ pub struct ApiState {
     query_timeout: Duration,
     max_staleness: Duration,
     metrics: metrics::ApiMetrics,
-    position_changes: broadcast::Sender<PositionChange>,
+    position_changes: broadcast::Sender<PositionBroadcast>,
 }
 
 impl ApiState {
@@ -104,6 +107,7 @@ pub struct ContractReport {
 }
 
 pub async fn contract_test(state: ApiState) -> anyhow::Result<ContractReport> {
+    state.metrics.set_position_listener_connected(true);
     let app = router(state.clone());
     let first = request_json(&app, "/v1/leaderboards?period=today&market_id=1&limit=2").await?;
     anyhow::ensure!(first.0 == StatusCode::OK);
@@ -267,6 +271,12 @@ struct PositionChange {
     user: String,
     market_id: i32,
     position_id: i64,
+}
+
+#[derive(Clone, Debug)]
+enum PositionBroadcast {
+    Change(PositionChange),
+    Resync,
 }
 
 #[derive(Serialize)]
@@ -627,7 +637,7 @@ async fn serve_position_stream(
             }
             changed = changes.recv() => {
                 match changed {
-                    Ok(change) if position_change_matches(
+                    Ok(PositionBroadcast::Change(change)) if position_change_matches(
                         &change,
                         &state.network,
                         &state.program_id,
@@ -655,7 +665,16 @@ async fn serve_position_stream(
                             }
                         }
                     }
-                    Ok(_) => {}
+                    Ok(PositionBroadcast::Change(_)) => {}
+                    Ok(PositionBroadcast::Resync) => {
+                        state.metrics.position_resync();
+                        if send_position_snapshot(&mut socket, &state, &wallet, market_id)
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
                     Err(broadcast::error::RecvError::Lagged(_)) => {
                         state.metrics.position_resync();
                         if send_position_snapshot(&mut socket, &state, &wallet, market_id)
@@ -799,36 +818,18 @@ async fn position_by_identity(
 
 pub async fn listen_for_position_changes(database_url: String, state: ApiState) {
     let mut retry_delay = Duration::from_millis(250);
+    let mut attempts = 0_u64;
     loop {
-        let result = async {
-            let mut listener = PgListener::connect(&database_url).await?;
-            listener.listen(POSITION_CHANNEL).await?;
-            retry_delay = Duration::from_millis(250);
-            loop {
-                let notification = listener.recv().await?;
-                match serde_json::from_str::<PositionChange>(notification.payload()) {
-                    Ok(change) => {
-                        let _ = state.position_changes.send(change);
-                    }
-                    Err(error) => {
-                        eprintln!(
-                            "{}",
-                            serde_json::json!({
-                                "timestamp": Utc::now(),
-                                "level": "warning",
-                                "service": "leveraged-prediction-api",
-                                "event": "position_notification_rejected",
-                                "error": error.to_string(),
-                            })
-                        );
-                    }
-                }
-            }
-            #[allow(unreachable_code)]
-            Ok::<(), sqlx::Error>(())
+        if attempts > 0 {
+            state.metrics.position_listener_reconnect();
         }
-        .await;
-        let _ = result;
+        attempts = attempts.saturating_add(1);
+        let result = run_position_listener_session(&database_url, &state).await;
+        let was_connected = state.metrics.snapshot().position_listener_connected;
+        state.metrics.set_position_listener_connected(false);
+        if was_connected {
+            retry_delay = Duration::from_millis(250);
+        }
         eprintln!(
             "{}",
             serde_json::json!({
@@ -837,11 +838,102 @@ pub async fn listen_for_position_changes(database_url: String, state: ApiState) 
                 "service": "leveraged-prediction-api",
                 "event": "position_listener_reconnecting",
                 "delay_ms": retry_delay.as_millis(),
-                "reason": "database_listener_unavailable",
+                "error": result
+                    .as_ref()
+                    .err()
+                    .map_or_else(|| "listener session ended".to_owned(), ToString::to_string),
             })
         );
         tokio::time::sleep(retry_delay).await;
         retry_delay = (retry_delay * 2).min(Duration::from_secs(10));
+    }
+}
+
+async fn run_position_listener_session(database_url: &str, state: &ApiState) -> Result<()> {
+    let mut listener = PgListener::connect(database_url)
+        .await
+        .context("failed to connect position listener")?;
+    listener
+        .listen_all([POSITION_CHANNEL, POSITION_HEARTBEAT_CHANNEL])
+        .await
+        .context("failed to subscribe position listener")?;
+    state.metrics.set_position_listener_connected(true);
+    broadcast_position_resync(state);
+
+    let mut heartbeat = tokio::time::interval(POSITION_HEARTBEAT_INTERVAL);
+    heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    heartbeat.tick().await;
+    loop {
+        tokio::select! {
+            notification = listener.try_recv() => {
+                match notification? {
+                    Some(notification) => handle_position_notification(notification, state),
+                    None => broadcast_position_resync(state),
+                }
+            }
+            _ = heartbeat.tick() => {
+                send_listener_heartbeat(state).await?;
+                tokio::time::timeout(
+                    POSITION_HEARTBEAT_TIMEOUT,
+                    receive_listener_heartbeat(&mut listener, state),
+                )
+                .await
+                .context("position listener heartbeat timed out")??;
+            }
+        }
+    }
+}
+
+async fn send_listener_heartbeat(state: &ApiState) -> Result<()> {
+    tokio::time::timeout(
+        POSITION_HEARTBEAT_TIMEOUT,
+        sqlx::query("SELECT pg_notify($1, '')")
+            .bind(POSITION_HEARTBEAT_CHANNEL)
+            .execute(state.storage.pool()),
+    )
+    .await
+    .context("position listener heartbeat query timed out")??;
+    Ok(())
+}
+
+async fn receive_listener_heartbeat(listener: &mut PgListener, state: &ApiState) -> Result<()> {
+    loop {
+        match listener.try_recv().await? {
+            Some(notification) if notification.channel() == POSITION_HEARTBEAT_CHANNEL => {
+                return Ok(());
+            }
+            Some(notification) => handle_position_notification(notification, state),
+            None => broadcast_position_resync(state),
+        }
+    }
+}
+
+fn broadcast_position_resync(state: &ApiState) {
+    let _ = state.position_changes.send(PositionBroadcast::Resync);
+}
+
+fn handle_position_notification(notification: PgNotification, state: &ApiState) {
+    if notification.channel() != POSITION_CHANNEL {
+        return;
+    }
+    match serde_json::from_str::<PositionChange>(notification.payload()) {
+        Ok(change) => {
+            let _ = state
+                .position_changes
+                .send(PositionBroadcast::Change(change));
+        }
+        Err(error) => {
+            eprintln!(
+                "{}",
+                serde_json::json!({
+                    "timestamp": Utc::now(),
+                    "level": "warning",
+                    "service": "leveraged-prediction-api",
+                    "event": "position_notification_rejected",
+                    "error": error.to_string(),
+                })
+            );
+        }
     }
 }
 
@@ -1036,10 +1128,12 @@ async fn live() -> Json<Health> {
     Json(Health {
         status: "live",
         database: None,
+        position_stream: None,
     })
 }
 
 async fn ready(State(state): State<ApiState>) -> Response {
+    let listener_connected = state.metrics.snapshot().position_listener_connected;
     match timed(&state, async {
         sqlx::query_scalar::<_, i32>("SELECT 1")
             .fetch_one(state.storage.pool())
@@ -1047,11 +1141,21 @@ async fn ready(State(state): State<ApiState>) -> Response {
     })
     .await
     {
-        Ok(_) => (
+        Ok(_) if listener_connected => (
             StatusCode::OK,
             Json(Health {
                 status: "ready",
                 database: Some("reachable"),
+                position_stream: Some("ready"),
+            }),
+        )
+            .into_response(),
+        Ok(_) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(Health {
+                status: "not_ready",
+                database: Some("reachable"),
+                position_stream: Some("unavailable"),
             }),
         )
             .into_response(),
@@ -1060,6 +1164,7 @@ async fn ready(State(state): State<ApiState>) -> Response {
             Json(Health {
                 status: "not_ready",
                 database: Some("unavailable"),
+                position_stream: Some("unavailable"),
             }),
         )
             .into_response(),
@@ -1094,6 +1199,10 @@ async fn prometheus_metrics(State(state): State<ApiState>) -> Result<Response, A
          leveraged_prediction_api_position_messages_total {}\n\
          # TYPE leveraged_prediction_api_position_resyncs_total counter\n\
          leveraged_prediction_api_position_resyncs_total {}\n\
+         # TYPE leveraged_prediction_api_position_listener_connected gauge\n\
+         leveraged_prediction_api_position_listener_connected {}\n\
+         # TYPE leveraged_prediction_api_position_listener_reconnects_total counter\n\
+         leveraged_prediction_api_position_listener_reconnects_total {}\n\
          # TYPE leveraged_prediction_api_pool_connections gauge\n\
          leveraged_prediction_api_pool_connections {}\n\
          # TYPE leveraged_prediction_api_pool_idle gauge\n\
@@ -1109,6 +1218,8 @@ async fn prometheus_metrics(State(state): State<ApiState>) -> Result<Response, A
         metrics.position_sockets,
         metrics.position_messages,
         metrics.position_resyncs,
+        i32::from(metrics.position_listener_connected),
+        metrics.position_listener_reconnects,
         pool_size,
         pool_idle,
     );
@@ -1120,6 +1231,8 @@ struct Health {
     status: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     database: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    position_stream: Option<&'static str>,
 }
 
 async fn projection_status(state: &ApiState) -> Result<ProjectionStatus, ApiError> {

@@ -24,6 +24,12 @@ Postgres emits only the position identity after the writer transaction commits; 
 canonical `api.position_history` row before broadcasting it. Clients should fetch every HTTP page
 on refresh, merge by `(market_id, position_id)`, and treat terminal lifecycle states as monotonic.
 
+The API verifies its dedicated PostgreSQL notification session every 30 seconds over a private
+heartbeat channel. A missing heartbeat makes readiness fail, logs the underlying listener error,
+reconnects the session, and sends fresh snapshots to connected clients after recovery. Monitor
+`leveraged_prediction_api_position_listener_connected` and
+`leveraged_prediction_api_position_listener_reconnects_total` alongside the socket metrics.
+
 ## Local stack
 
 Copy `deploy/env.example` to an untracked environment file and set a real
@@ -160,6 +166,8 @@ Reprojection procedure:
 - Writer database outage: subscription processing fails and alerts; the API remains independently
   available if its read connection works.
 - API database outage: `/health/ready` returns 503 and the frontend hides only indexed history.
+- API notification-listener outage: `/health/ready` returns 503 until the listener reconnects;
+  existing position sockets receive a canonical resync after recovery.
 - Refresh failure: the previous concurrent materialized views remain readable; refresh state retains
   the error and alerts.
 - API restart: clients retry; refresh-bound cursors may return `cursor_stale` and restart from the

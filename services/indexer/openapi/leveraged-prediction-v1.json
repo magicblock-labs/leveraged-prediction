@@ -33,6 +33,13 @@
             ],
             "type": "string"
           },
+          "position_stream": {
+            "enum": [
+              "ready",
+              "unavailable"
+            ],
+            "type": "string"
+          },
           "status": {
             "enum": [
               "live",

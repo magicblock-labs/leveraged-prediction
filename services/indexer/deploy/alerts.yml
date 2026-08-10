@@ -33,6 +33,13 @@ groups:
           severity: page
         annotations:
           summary: Leveraged Prediction API database queries are timing out
+      - alert: LeveragedPredictionPositionStreamUnavailable
+        expr: leveraged_prediction_api_position_listener_connected == 0
+        for: 1m
+        labels:
+          severity: page
+        annotations:
+          summary: Leveraged Prediction API position stream listener is unavailable
       - alert: LeveragedPredictionProjectionStale
         expr: leveraged_prediction_projection_stale == 1
         for: 2m

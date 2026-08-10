@@ -267,7 +267,8 @@ fn schemas() -> Value {
             "required": ["status"],
             "properties": {
                 "status": {"type": "string", "enum": ["live", "ready", "not_ready"]},
-                "database": {"type": "string", "enum": ["reachable", "unavailable"]}
+                "database": {"type": "string", "enum": ["reachable", "unavailable"]},
+                "position_stream": {"type": "string", "enum": ["ready", "unavailable"]}
             }
         },
         "Error": {

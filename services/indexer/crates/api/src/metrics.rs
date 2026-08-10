@@ -1,6 +1,6 @@
 use std::{
     sync::{
-        atomic::{AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         Arc,
     },
     time::Instant,
@@ -27,6 +27,8 @@ struct Inner {
     position_sockets: AtomicUsize,
     position_messages: AtomicU64,
     position_resyncs: AtomicU64,
+    position_listener_connected: AtomicBool,
+    position_listener_reconnects: AtomicU64,
 }
 
 pub struct Snapshot {
@@ -39,6 +41,8 @@ pub struct Snapshot {
     pub position_sockets: usize,
     pub position_messages: u64,
     pub position_resyncs: u64,
+    pub position_listener_connected: bool,
+    pub position_listener_reconnects: u64,
 }
 
 impl ApiMetrics {
@@ -53,6 +57,14 @@ impl ApiMetrics {
             position_sockets: self.inner.position_sockets.load(Ordering::Relaxed),
             position_messages: self.inner.position_messages.load(Ordering::Relaxed),
             position_resyncs: self.inner.position_resyncs.load(Ordering::Relaxed),
+            position_listener_connected: self
+                .inner
+                .position_listener_connected
+                .load(Ordering::Relaxed),
+            position_listener_reconnects: self
+                .inner
+                .position_listener_reconnects
+                .load(Ordering::Relaxed),
         }
     }
 
@@ -78,6 +90,18 @@ impl ApiMetrics {
 
     pub fn position_resync(&self) {
         self.inner.position_resyncs.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn set_position_listener_connected(&self, connected: bool) {
+        self.inner
+            .position_listener_connected
+            .store(connected, Ordering::Relaxed);
+    }
+
+    pub fn position_listener_reconnect(&self) {
+        self.inner
+            .position_listener_reconnects
+            .fetch_add(1, Ordering::Relaxed);
     }
 }
 
